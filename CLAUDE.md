@@ -32,13 +32,13 @@ python3 -m src
 **Production Installation:**
 ```bash
 pip install antigravity-bridge
-uvx agy
+uvx antigravity-bridge
 ```
 
 **Claude Code Integration:**
 ```bash
 # Production (recommended)
-claude mcp add antigravity-bridge -s user -- uvx agy
+claude mcp add antigravity-bridge -s user -- uvx antigravity-bridge
 
 # Development
 claude mcp add antigravity-bridge -s user -- python3 -m src
@@ -157,7 +157,7 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 ## Package Information
 
 - **Package Name**: `antigravity-bridge`
-- **Entry Point**: `agy = "src:main"`
+- **Entry Point**: `antigravity-bridge = "src:main"`
 - **License**: Apache 2.0
 - **Author**: Fojle Rabbi Rabib
 - **Python**: 3.10+

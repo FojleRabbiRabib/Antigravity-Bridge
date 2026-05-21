@@ -40,13 +40,13 @@ Authentication is handled internally by Antigravity — no separate login comman
 
 **Recommended: PyPI with uvx**
 ```bash
-claude mcp add antigravity-bridge -s user -- uvx agy
+claude mcp add antigravity-bridge -s user -- uvx antigravity-bridge
 ```
 
 **From PyPI**
 ```bash
 pip install antigravity-bridge
-claude mcp add antigravity-bridge -s user -- uvx agy
+claude mcp add antigravity-bridge -s user -- uvx antigravity-bridge
 ```
 
 **From Source**
@@ -79,7 +79,7 @@ All configuration is done through environment variables prefixed with `ANTIGRAVI
 
 **Timeout example:**
 ```bash
-claude mcp add antigravity-bridge -s user --env ANTIGRAVITY_BRIDGE_TIMEOUT=180 -- uvx agy
+claude mcp add antigravity-bridge -s user --env ANTIGRAVITY_BRIDGE_TIMEOUT=180 -- uvx antigravity-bridge
 ```
 
 ## Available Tools
@@ -140,7 +140,7 @@ Antigravity Bridge works with any MCP-compatible AI coding assistant. The server
 
 ### Claude Code
 ```bash
-claude mcp add antigravity-bridge -s user -- uvx agy
+claude mcp add antigravity-bridge -s user -- uvx antigravity-bridge
 ```
 
 ### Cursor
@@ -150,7 +150,7 @@ claude mcp add antigravity-bridge -s user -- uvx agy
   "mcpServers": {
     "antigravity-bridge": {
       "command": "uvx",
-      "args": ["agy"]
+      "args": ["antigravity-bridge"]
     }
   }
 }
@@ -164,7 +164,7 @@ claude mcp add antigravity-bridge -s user -- uvx agy
     "antigravity-bridge": {
       "type": "stdio",
       "command": "uvx",
-      "args": ["agy"]
+      "args": ["antigravity-bridge"]
     }
   }
 }
@@ -176,7 +176,7 @@ claude mcp add antigravity-bridge -s user -- uvx agy
   "mcpServers": {
     "antigravity-bridge": {
       "command": "uvx",
-      "args": ["agy"]
+      "args": ["antigravity-bridge"]
     }
   }
 }
@@ -191,7 +191,7 @@ claude mcp add antigravity-bridge -s user -- uvx agy
   "mcpServers": {
     "antigravity-bridge": {
       "command": "uvx",
-      "args": ["agy"]
+      "args": ["antigravity-bridge"]
     }
   }
 }
@@ -202,7 +202,7 @@ claude mcp add antigravity-bridge -s user -- uvx agy
 ```json
 {
   "command": "uvx",
-  "args": ["agy"]
+  "args": ["antigravity-bridge"]
 }
 ```
 
@@ -211,11 +211,11 @@ claude mcp add antigravity-bridge -s user -- uvx agy
 - Name: `antigravity-bridge`
 - Type: `STDIO`
 - Command: `uvx`
-- Arguments: `["agy"]`
+- Arguments: `["antigravity-bridge"]`
 
 ### Augment
 Click hamburger menu → `Settings` → `Tools` → `+ Add MCP`
-- Command: `uvx agy`
+- Command: `uvx antigravity-bridge`
 - Name: Antigravity Bridge
 
 ### Roo Code
@@ -225,7 +225,7 @@ Click hamburger menu → `Settings` → `Tools` → `+ Add MCP`
   "mcpServers": {
     "antigravity-bridge": {
       "command": "uvx",
-      "args": ["agy"]
+      "args": ["antigravity-bridge"]
     }
   }
 }
@@ -236,7 +236,7 @@ Zencoder menu → `Tools` → `Add Custom MCP`
 ```json
 {
   "command": "uvx",
-  "args": ["agy"]
+  "args": ["antigravity-bridge"]
 }
 ```
 

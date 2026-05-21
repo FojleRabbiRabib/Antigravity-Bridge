@@ -1,12 +1,12 @@
 # Repository Guidelines
 
 ## Project Structure & Module Organization
-The package lives under `src/`, with `tools.py` defining the FastMCP tools and `__main__.py` exposing the module entry point. `config.py` holds all constants and environment variable reading. `cli.py` handles subprocess calls to `agy`. `files.py` manages file attachment preprocessing. Project metadata and the `agy` console script are declared in `pyproject.toml`.
+The package lives under `src/`, with `tools.py` defining the FastMCP tools and `__main__.py` exposing the module entry point. `config.py` holds all constants and environment variable reading. `cli.py` handles subprocess calls to `agy`. `files.py` manages file attachment preprocessing. Project metadata and the `antigravity-bridge` console script are declared in `pyproject.toml`.
 
 ## Build, Test, and Development Commands
 - `pip install -e .` — install in editable mode for local development.
 - `python3 -m src` — launch the MCP server directly; use `CTRL+C` to exit.
-- `uvx agy` — run the packaged CLI exactly as downstream clients will.
+- `uvx antigravity-bridge` — run the packaged MCP server exactly as downstream clients will.
 - `uvx --from build pyproject-build` — build distribution artifacts.
 - `pytest` — run the full test suite.
 Run commands from the project root to ensure relative paths resolve correctly.
@@ -18,13 +18,13 @@ Run commands from the project root to ensure relative paths resolve correctly.
 ## Installation
 - **Development**: `pip install -e .`
 - **Production**: `pip install antigravity-bridge`
-- **Claude Code**: `claude mcp add antigravity-bridge -s user -- uvx agy`
+- **Claude Code**: `claude mcp add antigravity-bridge -s user -- uvx antigravity-bridge`
 
 ## Coding Style & Naming Conventions
 Follow PEP 8 with 4-space indentation and an 88-character target line length. Use descriptive, lowercase `snake_case` for functions and variables, `UPPER_SNAKE_CASE` for constants, and reserve `CamelCase` for classes. Keep functions small, add docstrings describing intent, and include type hints on public interfaces. Use `python3` not `python` (system python may be v2). Use `from __future__ import annotations` in all modules for consistent type hint support.
 
 ## Testing Guidelines
-Validate changes by exercising all three MCP tools: `agy_consult`, `agy_consult_with_files`, and `agy_web_search`. Run `python3 -m src` for the stdio server and `uvx agy --help` to confirm CLI wiring. Automated tests are located under `tests/`:
+Validate changes by exercising all three MCP tools: `agy_consult`, `agy_consult_with_files`, and `agy_web_search`. Run `python3 -m src` for the stdio server and `uvx antigravity-bridge --help` to confirm CLI wiring. Automated tests are located under `tests/`:
 - `tests/test_config.py` — environment variable and timeout tests (covers all 9 `ANTIGRAVITY_BRIDGE_*` env vars)
 - `tests/test_cli.py` — CLI execution and error handling tests (CLI not found, auth errors, timeout, sandbox, skip-permissions)
 - `tests/test_files.py` — file handling and truncation tests (inline payload, @-command, path resolution, missing files, limits)

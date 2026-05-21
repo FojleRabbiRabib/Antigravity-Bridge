@@ -57,7 +57,7 @@ jobs:
 
           ### Usage
           ```bash
-          claude mcp add antigravity-bridge -s user -- uvx agy
+          claude mcp add antigravity-bridge -s user -- uvx antigravity-bridge
           ```
 
           See [README.md](README.md) for full documentation.

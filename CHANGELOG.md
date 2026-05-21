@@ -36,7 +36,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `ANTIGRAVITY_BRIDGE_INLINE_TAIL_BYTES` — tail chunk for truncated files (default: 32 KB)
 
 #### Deployment & Installation
-- **uvx Support**: `uvx agy` for zero-install production deployment
+- **uvx Support**: `uvx antigravity-bridge` for zero-install production deployment
 - **pip install**: `pip install antigravity-bridge` for traditional installation
 - **Development Mode**: `pip install -e .` for local source development
 - **Module Execution**: `python3 -m src` for running the MCP server directly

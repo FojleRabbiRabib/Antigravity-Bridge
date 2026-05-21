@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "antigravity-bridge"
-version = "1.0.0"
+version = "1.0.1"
 description = "Lightweight MCP server bridging Claude Code to Antigravity AI via official CLI"
 readme = "README.md"
 license = "Apache-2.0"
@@ -28,7 +28,7 @@ dependencies = [
 ]
 
 [project.scripts]
-agy = "src:main"
+antigravity-bridge = "src:main"
 
 [project.urls]
 Homepage = "https://github.com/FojleRabbiRabib/Antigravity-Bridge"
