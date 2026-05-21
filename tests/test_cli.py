@@ -41,7 +41,7 @@ def test_simple_success(tmp_path, monkeypatch):
     _reload(cli, monkeypatch)
     monkeypatch.setattr("src.cli.shutil.which", lambda _: "agy")
 
-    def fake_run(cmd, cwd, capture_output, text, timeout):
+    def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
         assert "agy" in cmd
         assert "--print" in cmd
         assert "Hello" in cmd
@@ -113,7 +113,7 @@ def test_simple_timeout_override(tmp_path, monkeypatch):
     _reload(cli, monkeypatch)
     monkeypatch.setattr("src.cli.shutil.which", lambda _: "agy")
 
-    def fake_run(cmd, cwd, capture_output, text, timeout):
+    def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
         assert timeout == 5
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
 
@@ -189,7 +189,7 @@ def test_with_files_inline_mode(tmp_path, monkeypatch):
     f = tmp_path / "example.txt"
     f.write_text("content", encoding="utf-8")
 
-    def fake_run(cmd, cwd, capture_output, text, timeout):
+    def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
         assert "--print" in cmd
         assert "=== example.txt ===" in " ".join(cmd)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")
@@ -207,7 +207,7 @@ def test_with_files_at_command_mode(tmp_path, monkeypatch):
     f.parent.mkdir()
     f.write_text("data", encoding="utf-8")
 
-    def fake_run(cmd, cwd, capture_output, text, timeout):
+    def fake_run(cmd, cwd, capture_output, text, timeout, **kwargs):
         assert "--print" in cmd
         assert "@context/info.txt" in " ".join(cmd)
         return SimpleNamespace(returncode=0, stdout="ok", stderr="")

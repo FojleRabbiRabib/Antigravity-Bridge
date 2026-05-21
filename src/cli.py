@@ -27,6 +27,7 @@ def _run_agy(cmd: list[str], directory: str, timeout: int) -> tuple[bool, str, s
             capture_output=True,
             text=True,
             timeout=timeout,
+            stdin=subprocess.DEVNULL,
         )
         if result.returncode == 0:
             output = result.stdout.strip() if result.stdout.strip() else "No output from Antigravity CLI"
