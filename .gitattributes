@@ -1,0 +1,20 @@
+* text=auto eol=lf
+
+*.py text diff=python
+*.md text diff=markdown
+*.txt text
+*.yml text
+*.yaml text
+*.json text
+*.toml text
+*.cfg text
+*.ini text
+
+LICENSE text
+.gitattributes text
+.gitignore text
+.editorconfig text
+
+*.whl binary
+*.tar.gz binary
+*.egg binary
