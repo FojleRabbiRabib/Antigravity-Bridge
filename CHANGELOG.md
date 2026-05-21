@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-05-22
+
+### Fixed
+- **Subprocess stdin conflict**: Added `stdin=subprocess.DEVNULL` to `agy` subprocess calls to prevent deadlock when running inside MCP stdio transport. Without this fix, `agy` could try to read from the MCP server's stdin, causing timeouts.
+
+---
+
+## [1.0.1] - 2026-05-22
+
+### Fixed
+- **Package entry point**: Renamed console script from `agy` to `antigravity-bridge`. The previous name caused `uvx agy` to look for a non-existent PyPI package instead of `antigravity-bridge`.
+- **Minimum Python version**: Bumped from 3.9 to 3.10. The `mcp>=1.0.0` dependency requires Python >=3.10.
+- **Legacy license classifier**: Removed `License :: OSI Approved :: Apache Software License` classifier per PEP 639 (SPDX `license = "Apache-2.0"` is sufficient).
+
+### Changed
+- Updated all documentation, MCP client configs, and CI workflows to reflect the new entry point name.
+
+---
+
 ## [1.0.0] - 2026-05-22
 
 ### Added
@@ -78,4 +97,6 @@ src/
 - **Issues**: [https://github.com/FojleRabbiRabib/Antigravity-Bridge/issues](https://github.com/FojleRabbiRabib/Antigravity-Bridge/issues)
 - **MCP Protocol**: [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/)
 
+[1.0.2]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.2
+[1.0.1]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.1
 [1.0.0]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.0

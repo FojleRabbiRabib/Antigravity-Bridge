@@ -309,11 +309,11 @@ python3 -c "import src; print(f'v{src.__version__}')"
 
 ## Contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for development guidelines.
+See [CONTRIBUTING.md](https://github.com/FojleRabbiRabib/Antigravity-Bridge/blob/main/CONTRIBUTING.md) for development guidelines.
 
 ## License
 
-Apache 2.0 — see [LICENSE](LICENSE).
+Apache 2.0 — see [LICENSE](https://github.com/FojleRabbiRabib/Antigravity-Bridge/blob/main/LICENSE).
 
 ## Support
 
