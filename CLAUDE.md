@@ -148,7 +148,7 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 
 ## Development Guidelines
 
-- **Python 3.9+** with modern type hints (uses `from __future__ import annotations` for 3.9 compat)
+- **Python 3.10+** with modern type hints (uses `from __future__ import annotations`)
 - **PEP 8**, 88-char line length
 - **Type hints** on all public interfaces
 - **`python3`** not `python` (system python may be v2)
@@ -160,5 +160,5 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 - **Entry Point**: `agy = "src:main"`
 - **License**: Apache 2.0
 - **Author**: Fojle Rabbi Rabib
-- **Python**: 3.9+
+- **Python**: 3.10+
 - **Dependencies**: `mcp>=1.0.0`

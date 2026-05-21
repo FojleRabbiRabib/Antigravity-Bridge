@@ -149,7 +149,7 @@ body:
           required: true
         - label: I can reproduce this bug consistently
           required: true
-        - label: I am using a supported Python version (3.9+)
+        - label: I am using a supported Python version (3.10+)
           required: true
         - label: Antigravity CLI is installed and authenticated
           required: true

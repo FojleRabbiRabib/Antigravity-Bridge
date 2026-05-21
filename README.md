@@ -3,7 +3,7 @@
 ![CI Status](https://github.com/FojleRabbiRabib/Antigravity-Bridge/actions/workflows/ci.yml/badge.svg)
 ![PyPI Version](https://img.shields.io/pypi/v/antigravity-bridge)
 ![Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-blue.svg)
-![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)
+![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)
 ![MCP Compatible](https://img.shields.io/badge/MCP-compatible-green.svg)
 
 A lightweight MCP (Model Context Protocol) server that enables AI coding assistants to interact with Antigravity AI through the official CLI. Zero API costs, stateless architecture, minimal dependencies. Production-ready with comprehensive CI/CD automation.
@@ -17,7 +17,7 @@ A lightweight MCP (Model Context Protocol) server that enables AI coding assista
 - **Minimal Dependencies**: Only requires `mcp>=1.0.0` and Antigravity CLI
 - **Easy Deployment**: Support for both `uvx` and traditional `pip` installation
 - **Universal MCP Compatibility**: Works with Claude Code, Cursor, VS Code, Windsurf, Cline, Void, Cherry Studio, Augment, Roo Code, Zencoder, and any MCP-compatible client
-- **Modern Python**: Python 3.9+ with type hints and pathlib
+- **Modern Python**: Python 3.10+ with type hints and pathlib
 
 ## Prerequisites
 

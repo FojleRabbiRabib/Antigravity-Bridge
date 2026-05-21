@@ -6,7 +6,7 @@ Thank you for your interest in contributing to Antigravity Bridge! We welcome co
 
 ### Prerequisites
 
-- Python 3.9 or higher
+- Python 3.10 or higher
 - Antigravity CLI installed: `curl -fsSL https://antigravity.google/cli/install.sh | bash`
 - Verify: `agy --version`
 - Git for version control

@@ -21,7 +21,7 @@ Run commands from the project root to ensure relative paths resolve correctly.
 - **Claude Code**: `claude mcp add antigravity-bridge -s user -- uvx agy`
 
 ## Coding Style & Naming Conventions
-Follow PEP 8 with 4-space indentation and an 88-character target line length. Use descriptive, lowercase `snake_case` for functions and variables, `UPPER_SNAKE_CASE` for constants, and reserve `CamelCase` for classes. Keep functions small, add docstrings describing intent, and include type hints on public interfaces. Use `python3` not `python` (system python may be v2). Use `from __future__ import annotations` in all modules for Python 3.9+ compatibility.
+Follow PEP 8 with 4-space indentation and an 88-character target line length. Use descriptive, lowercase `snake_case` for functions and variables, `UPPER_SNAKE_CASE` for constants, and reserve `CamelCase` for classes. Keep functions small, add docstrings describing intent, and include type hints on public interfaces. Use `python3` not `python` (system python may be v2). Use `from __future__ import annotations` in all modules for consistent type hint support.
 
 ## Testing Guidelines
 Validate changes by exercising all three MCP tools: `agy_consult`, `agy_consult_with_files`, and `agy_web_search`. Run `python3 -m src` for the stdio server and `uvx agy --help` to confirm CLI wiring. Automated tests are located under `tests/`:
