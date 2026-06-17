@@ -21,6 +21,9 @@ jobs:
       run: |
         python3 -m pip install --upgrade pip
         pip install ruff black mypy
+        # Install the project so its runtime dep `mcp` is present; otherwise
+        # mypy sees FastMCP/@mcp.tool() as untyped under strict mode.
+        pip install -e .
 
     - name: Ruff lint
       run: ruff check src tests
