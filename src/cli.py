@@ -247,15 +247,19 @@ async def ensure_healthy() -> bool:
                 stdin=asyncio.subprocess.DEVNULL,
             )
             await asyncio.wait_for(proc.communicate(), timeout=10)
-        except (FileNotFoundError, OSError) as exc:
-            logger.debug("agy health check failed: %s", exc)
-            return False
         except asyncio.TimeoutError:
             # The timed-out subprocess is still alive — reap it to avoid leaks.
+            # NOTE: this must precede the OSError handler. On Python 3.11+
+            # asyncio.TimeoutError aliases the builtin TimeoutError, which is a
+            # subclass of OSError, so a broader OSError handler would otherwise
+            # swallow the timeout and leak the probe process.
             logger.debug("agy health check timed out; killing probe process")
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
             await proc.wait()
+            return False
+        except (FileNotFoundError, OSError) as exc:
+            logger.debug("agy health check failed: %s", exc)
             return False
         healthy = proc.returncode == 0
         if healthy:
