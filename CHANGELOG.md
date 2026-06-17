@@ -5,6 +5,17 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2026-06-17
+
+### Fixed
+- **Health-check subprocess leak on Python 3.11+**: `ensure_healthy` now handles `asyncio.TimeoutError` before `OSError`. On Python 3.11+ `asyncio.TimeoutError` aliases the builtin `TimeoutError` (a subclass of `OSError`), so the broader `OSError` handler previously swallowed the timeout and the probe process was never killed. (Passed on 3.10, where `asyncio.TimeoutError` is a distinct class.)
+
+### Changed (CI)
+- Lint job installs the project so `mypy` (strict) resolves the `mcp` package types instead of treating `@mcp.tool()` as an untyped decorator.
+- Tests: prefixed unused unpacked variables (`ruff` RUF059).
+
+---
+
 ## [1.1.0] - 2026-06-17
 
 ### Added
@@ -124,6 +135,7 @@ src/
 - **Issues**: [https://github.com/FojleRabbiRabib/Antigravity-Bridge/issues](https://github.com/FojleRabbiRabib/Antigravity-Bridge/issues)
 - **MCP Protocol**: [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/)
 
+[1.1.1]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.1.1
 [1.1.0]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.1.0
 [1.0.2]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.2
 [1.0.1]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.1

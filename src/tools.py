@@ -4,36 +4,18 @@ from __future__ import annotations
 
 import signal
 import sys
-from importlib.metadata import PackageNotFoundError
-from importlib.metadata import version as _pkg_version
 
 from mcp.server.fastmcp import FastMCP
 
-from . import cli, config, observability, security
-
-
-def _app_version() -> str:
-    """Resolve the bridge's own version (avoids the mcp SDK version leak).
-
-    ``src/__init__.py`` defines ``__version__`` *after* importing this module,
-    so reading it at import time would trigger a circular-import AttributeError.
-    Distribution metadata is the same single source of truth and is available
-    immediately; fall back to ``src.__version__`` for unpackaged dev runs.
-    """
-    try:
-        return _pkg_version("antigravity-bridge")
-    except PackageNotFoundError:
-        from . import __version__  # late import: src is fully initialized by now
-
-        return __version__
-
+from . import __version__, cli, config, observability, security
 
 mcp = FastMCP("antigravity-bridge")
 # FastMCP's constructor does not accept a version kwarg (it is not part of
 # ``Settings``), and without one the handshake falls back to the installed
 # ``mcp`` SDK version. Set the underlying server's public ``version`` attribute
-# so ``initialize`` advertises the bridge's own version.
-mcp._mcp_server.version = _app_version()
+# to src.__version__ (the single source of truth) so ``initialize`` advertises
+# the bridge's own version.
+mcp._mcp_server.version = __version__
 
 
 def _validate_query(query: str) -> str | None:
