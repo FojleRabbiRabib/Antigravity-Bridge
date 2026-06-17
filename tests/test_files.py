@@ -31,7 +31,7 @@ def test_resolve_path_absolute():
 
 
 def test_resolve_path_outside_directory():
-    abs_path, rel_path = files.resolve_path("/project", "../secret/key.pem")
+    _abs_path, rel_path = files.resolve_path("/project", "../secret/key.pem")
     assert rel_path is None
 
 
@@ -50,7 +50,7 @@ def test_read_file_truncated(tmp_path, monkeypatch):
     monkeypatch.setattr("src.config.INLINE_CHUNK_TAIL_BYTES", 4)
     f = tmp_path / "big.txt"
     f.write_text("0123456789abcdefghij", encoding="utf-8")
-    content, truncated, used = files.read_file_for_inline(str(f))
+    content, truncated, _used = files.read_file_for_inline(str(f))
     assert truncated is True
     assert "[... truncated ...]" in content
 
@@ -65,7 +65,7 @@ def test_prepare_inline_payload_basic(tmp_path):
 
 
 def test_prepare_inline_payload_missing_file(tmp_path):
-    payload, warnings = files.prepare_inline_payload(str(tmp_path), ["gone.txt"])
+    _payload, warnings = files.prepare_inline_payload(str(tmp_path), ["gone.txt"])
     assert "Skipped missing file: gone.txt" in warnings
 
 
@@ -77,7 +77,7 @@ def test_prepare_inline_payload_total_limit(tmp_path, monkeypatch):
     f1.write_text("a", encoding="utf-8")
     f2.write_text("b", encoding="utf-8")
     f3.write_text("c", encoding="utf-8")
-    payload, warnings = files.prepare_inline_payload(
+    _payload, warnings = files.prepare_inline_payload(
         str(tmp_path), ["a.txt", "b.txt", "c.txt"]
     )
     assert "Inline file limit reached" in "\n".join(warnings)
@@ -89,7 +89,7 @@ def test_prepare_inline_payload_uses_antigravity_label(tmp_path, monkeypatch):
     monkeypatch.setattr("src.config.INLINE_CHUNK_TAIL_BYTES", 2)
     f = tmp_path / "big.txt"
     f.write_text("0123456789", encoding="utf-8")
-    payload, warnings = files.prepare_inline_payload(str(tmp_path), ["big.txt"])
+    payload, _warnings = files.prepare_inline_payload(str(tmp_path), ["big.txt"])
     assert "[antigravity-bridge]" in payload
 
 
@@ -103,12 +103,12 @@ def test_prepare_at_command_prompt_basic(tmp_path):
 
 
 def test_prepare_at_command_prompt_missing(tmp_path):
-    prompt, warnings = files.prepare_at_command_prompt(str(tmp_path), ["nope.txt"])
+    _prompt, warnings = files.prepare_at_command_prompt(str(tmp_path), ["nope.txt"])
     assert "No readable files" in "\n".join(warnings)
 
 
 def test_prepare_at_command_prompt_outside_directory(tmp_path):
-    prompt, warnings = files.prepare_at_command_prompt(str(tmp_path), ["/etc/passwd"])
+    _prompt, warnings = files.prepare_at_command_prompt(str(tmp_path), ["/etc/passwd"])
     assert "Skipped file outside working directory" in "\n".join(warnings)
 
 
