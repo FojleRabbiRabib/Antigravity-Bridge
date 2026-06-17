@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "antigravity-bridge"
-version = "1.0.2"
+dynamic = ["version"]
 description = "Lightweight MCP server bridging Claude Code to Antigravity AI via official CLI"
 readme = "README.md"
 license = "Apache-2.0"
@@ -19,12 +19,23 @@ classifiers = [
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Software Development :: Libraries :: Python Modules",
     "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4",
+    "ruff>=0.5",
+    "black>=24",
+    "mypy>=1.10",
 ]
 
 [project.scripts]
@@ -39,5 +50,38 @@ Issues = "https://github.com/FojleRabbiRabib/Antigravity-Bridge/issues"
 where = ["."]
 include = ["src*"]
 
+[tool.setuptools.dynamic]
+version = {attr = "src.__version__"}
+
 [tool.setuptools.package-data]
 src = ["*.md", "*.txt", "*.env.example"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+
+[tool.coverage.run]
+branch = true
+source = ["src"]
+
+[tool.coverage.report]
+fail_under = 90
+show_missing = true
+
+[tool.ruff]
+line-length = 88
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = ["E501"]
+
+[tool.black]
+line-length = 88
+target-version = ["py310"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+ignore_missing_imports = true
+exclude = ["tests/"]
