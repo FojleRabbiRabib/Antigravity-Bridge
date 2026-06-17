@@ -1,24 +1,29 @@
-"""Antigravity Bridge file handling — inline payloads, @-command prep, truncation."""
+"""Antigravity Bridge file handling — inline payloads, @-command prep, truncation.
+
+All path resolution goes through :mod:`src.security` so files that escape the
+working directory (including via symlinks) are rejected, and binary files are
+skipped rather than dumped into the prompt.
+"""
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
-from . import config
+from . import config, security
 
 
 def resolve_path(directory: str, candidate: str) -> tuple[str, str | None]:
-    """Return absolute path and relative display path rooted at directory."""
-    candidate_path = Path(candidate)
-    abs_path = str(candidate_path) if candidate_path.is_absolute() else str(Path(directory) / candidate)
+    """Return absolute path and a relative display path rooted at ``directory``.
+
+    Returns ``(abs_path, None)`` when the candidate escapes the working directory
+    (after symlink resolution). Callers must treat a ``None`` relative path as
+    "not safe to include".
+    """
     try:
-        rel_path = os.path.relpath(abs_path, directory)
-    except ValueError:
-        rel_path = None
-    if rel_path and rel_path.startswith(".."):
-        rel_path = None
-    return abs_path, rel_path
+        abs_path, rel_path = security.resolve_within_root(directory, candidate)
+    except security.SecurityError:
+        return str(Path(candidate).resolve(strict=False)), None
+    return str(abs_path), str(rel_path)
 
 
 def read_file_for_inline(abs_path: str) -> tuple[str, bool, int]:
@@ -57,7 +62,9 @@ def read_file_for_inline(abs_path: str) -> tuple[str, bool, int]:
     return snippet, truncated, bytes_counted
 
 
-def prepare_inline_payload(directory: str, files_list: list[str]) -> tuple[str, list[str]]:
+def prepare_inline_payload(
+    directory: str, files_list: list[str]
+) -> tuple[str, list[str]]:
     """Return inline payload string and any warnings."""
     warnings: list[str] = []
     file_blocks: list[str] = []
@@ -70,15 +77,30 @@ def prepare_inline_payload(directory: str, files_list: list[str]) -> tuple[str, 
 
     for original_path in files_list:
         abs_path, rel_path = resolve_path(directory, original_path)
-        display_name = rel_path or Path(abs_path).name
+
+        if rel_path is None:
+            warnings.append(f"Skipped file outside working directory: {original_path}")
+            continue
+
+        display_name = rel_path
 
         if not Path(abs_path).exists():
             warnings.append(f"Skipped missing file: {display_name}")
             continue
 
+        if not Path(abs_path).is_file():
+            warnings.append(f"Skipped non-regular file: {display_name}")
+            continue
+
         if processed >= config.MAX_INLINE_FILE_COUNT:
-            warnings.append(f"Inline file limit reached ({config.MAX_INLINE_FILE_COUNT}); skipped remaining attachments")
+            warnings.append(
+                f"Inline file limit reached ({config.MAX_INLINE_FILE_COUNT}); skipped remaining attachments"
+            )
             break
+
+        if not security.is_text_file(abs_path):
+            warnings.append(f"Skipped binary file: {display_name}")
+            continue
 
         try:
             content, truncated, bytes_used = read_file_for_inline(abs_path)
@@ -87,16 +109,24 @@ def prepare_inline_payload(directory: str, files_list: list[str]) -> tuple[str, 
             continue
 
         if total_bytes + bytes_used > config.MAX_INLINE_TOTAL_BYTES:
-            warnings.append(f"Inline payload exceeded {config.MAX_INLINE_TOTAL_BYTES} bytes; skipped {display_name} and remaining attachments")
+            warnings.append(
+                f"Inline payload exceeded {config.MAX_INLINE_TOTAL_BYTES} bytes; "
+                f"skipped {display_name} and remaining attachments"
+            )
             break
 
         block_header = f"=== {display_name} ==="
         if truncated:
-            block_header += "\n[antigravity-bridge] Content truncated for inline transfer"
+            block_header += (
+                "\n[antigravity-bridge] Content truncated for inline transfer"
+            )
         file_blocks.append(f"{block_header}\n{content}")
 
         if truncated:
-            warnings.append(f"Truncated {display_name}; only the first {config.INLINE_CHUNK_HEAD_BYTES}B and last {config.INLINE_CHUNK_TAIL_BYTES}B were sent")
+            warnings.append(
+                f"Truncated {display_name}; only the first {config.INLINE_CHUNK_HEAD_BYTES}B "
+                f"and last {config.INLINE_CHUNK_TAIL_BYTES}B were sent"
+            )
 
         total_bytes += bytes_used
         processed += 1
@@ -105,18 +135,20 @@ def prepare_inline_payload(directory: str, files_list: list[str]) -> tuple[str, 
     return payload, warnings
 
 
-def prepare_at_command_prompt(directory: str, files_list: list[str]) -> tuple[str, list[str]]:
+def prepare_at_command_prompt(
+    directory: str, files_list: list[str]
+) -> tuple[str, list[str]]:
     """Return @-command prompt and any warnings."""
     warnings: list[str] = []
     prompt_lines: list[str] = []
 
     for original_path in files_list:
         abs_path, rel_path = resolve_path(directory, original_path)
-        if not Path(abs_path).exists():
-            warnings.append(f"Skipped missing file: {original_path}")
-            continue
         if rel_path is None:
             warnings.append(f"Skipped file outside working directory: {original_path}")
+            continue
+        if not Path(abs_path).exists():
+            warnings.append(f"Skipped missing file: {original_path}")
             continue
         prompt_lines.append(f"@{rel_path}")
 

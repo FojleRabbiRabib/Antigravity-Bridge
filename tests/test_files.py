@@ -1,3 +1,4 @@
+import os
 import sys
 from pathlib import Path
 
@@ -76,7 +77,9 @@ def test_prepare_inline_payload_total_limit(tmp_path, monkeypatch):
     f1.write_text("a", encoding="utf-8")
     f2.write_text("b", encoding="utf-8")
     f3.write_text("c", encoding="utf-8")
-    payload, warnings = files.prepare_inline_payload(str(tmp_path), ["a.txt", "b.txt", "c.txt"])
+    payload, warnings = files.prepare_inline_payload(
+        str(tmp_path), ["a.txt", "b.txt", "c.txt"]
+    )
     assert "Inline file limit reached" in "\n".join(warnings)
 
 
@@ -107,3 +110,50 @@ def test_prepare_at_command_prompt_missing(tmp_path):
 def test_prepare_at_command_prompt_outside_directory(tmp_path):
     prompt, warnings = files.prepare_at_command_prompt(str(tmp_path), ["/etc/passwd"])
     assert "Skipped file outside working directory" in "\n".join(warnings)
+
+
+def test_prepare_inline_payload_skips_binary(tmp_path):
+    b = tmp_path / "x.bin"
+    b.write_bytes(b"\x00\x01\x02PNG")
+    payload, warnings = files.prepare_inline_payload(str(tmp_path), ["x.bin"])
+    assert payload == ""
+    assert any("binary" in w.lower() for w in warnings)
+
+
+def test_prepare_inline_payload_skips_escape(tmp_path):
+    # File outside the working directory must NOT be inlined (security hole fix).
+    payload, warnings = files.prepare_inline_payload(
+        str(tmp_path), ["../../../../etc/hostname"]
+    )
+    assert payload == ""
+    assert any("outside working directory" in w.lower() for w in warnings)
+
+
+def test_prepare_inline_payload_skips_escape_symlink(tmp_path):
+    # A symlink inside the working dir that resolves OUTSIDE must be rejected.
+    sandbox = tmp_path / "sandbox"
+    sandbox.mkdir()
+    target = tmp_path / "secret.txt"  # outside the sandbox working dir
+    target.write_text("secret", encoding="utf-8")
+    link = sandbox / "link.txt"
+    link.symlink_to(target)
+    payload, warnings = files.prepare_inline_payload(str(sandbox), ["link.txt"])
+    assert payload == ""
+    assert any("outside working directory" in w.lower() for w in warnings)
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo"), reason="mkfifo unavailable on this platform"
+)
+def test_prepare_inline_payload_skips_fifo(tmp_path):
+    # A FIFO (named pipe) is a non-regular special file. Opening it BLOCKS until
+    # a writer connects, which would hang the MCP event loop. The guard in
+    # prepare_inline_payload must skip it before any open() call, so this test
+    # returns in milliseconds rather than hanging.
+    fifo = tmp_path / "pipe"
+    os.mkfifo(str(fifo))
+
+    payload, warnings = files.prepare_inline_payload(str(tmp_path), ["pipe"])
+
+    assert payload == ""
+    assert any("non-regular" in w.lower() for w in warnings)
