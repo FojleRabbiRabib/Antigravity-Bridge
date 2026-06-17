@@ -74,35 +74,55 @@ python3 -c "import src; print('Package works!')"
 ### Module Structure
 ```
 src/
-├── __init__.py      # Package entry point and version
-├── __main__.py      # Module execution entry point
-├── config.py        # Constants and environment variable configuration
-├── cli.py           # Antigravity CLI subprocess interface
-├── files.py         # File attachment and preprocessing
-└── tools.py         # MCP tool definitions
+├── __init__.py        # Package entry point, single-source version
+├── __main__.py        # Module execution entry point
+├── config.py          # Validated Settings + environment variables
+├── security.py        # Path containment, allowlist, query/binary validation
+├── files.py           # File attachment and preprocessing
+├── command.py         # Typed agy argv builder (AgyCommand)
+├── cli.py             # Async subprocess execution, retry, health check
+├── observability.py   # Structured logging (text/JSON), request IDs, metrics
+└── tools.py           # MCP tool definitions (FastMCP, async)
 ```
 
 ### Key Components
 
 **`src/config.py`** — Configuration and environment variables
 - All `ANTIGRAVITY_BRIDGE_*` environment variables with sensible defaults
+- `Settings` frozen dataclass + `load_settings()` / `validate_config()` (fail-fast)
 - `get_timeout()` / `coerce_timeout()` — timeout validation
 - `should_skip_permissions()` / `should_sandbox()` — flag helpers
 
-**`src/cli.py`** — Subprocess calls to `agy`
-- `execute_antigravity_simple(query, directory, timeout_seconds)` — Simple CLI bridge
-- `execute_antigravity_with_files(query, directory, files_list, timeout_seconds, mode)` — File-attachment support
+**`src/security.py`** — Security & validation
+- `resolve_within_root()` — symlink-aware path containment
+- `check_allowed_directory()` — directory allowlist (empty = unrestricted)
+- `validate_query()` — length + control-character validation
+- `is_text_file()` — NUL-byte binary detection
+
+**`src/command.py`** — Typed argv builder
+- `AgyCommand` dataclass → `.build()` assembles the full `agy` argv (model, add-dirs, `--print-timeout`, conversation)
+
+**`src/cli.py`** — Async subprocess execution
+- `execute_antigravity_simple_async()` / `execute_antigravity_with_files_async()` / `execute_antigravity_models_async()` — async core
+- `execute_antigravity_simple()` / `execute_antigravity_with_files()` — sync wrappers (preserve public API)
+- `_run_agy_async()` / `_run_with_retry()` / `ensure_healthy()` — execution, retry, preflight
 
 **`src/files.py`** — File preprocessing
-- `resolve_path()` — path resolution with directory boundary checks
+- `resolve_path()` — path resolution via `security` (rejects escapes/symlinks)
 - `read_file_for_inline()` — read with head/tail truncation safeguards
-- `prepare_inline_payload()` — build inline payload for stdin
+- `prepare_inline_payload()` — build inline payload (skips binary + escaped files)
 - `prepare_at_command_prompt()` — build `@path` directives
 
-**`src/tools.py`** — MCP tool definitions (FastMCP)
+**`src/observability.py`** — Logging & metrics
+- `setup_logging(level, fmt)` — text or JSON handler
+- `new_request_id()` / `record_call()` / `get_logger()` — request IDs + structured metrics
+
+**`src/tools.py`** — MCP tool definitions (FastMCP, async)
 - `agy_consult()` — simple query tool
 - `agy_consult_with_files()` — file context tool
 - `agy_web_search()` — web search tool
+- `agy_list_models()` — list available models
+- `main()` — logging init, config validation, signal handlers, `mcp.run()`
 
 ### Configuration
 
@@ -112,8 +132,16 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 |---|---|---|
 | `ANTIGRAVITY_BRIDGE_TIMEOUT` | `120` | Global timeout override (seconds) |
 | `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `120` | Module-level default timeout |
-| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `true` | Auto-skip permissions for MCP |
+| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `false` | Add `--dangerously-skip-permissions` (opt-in) |
 | `ANTIGRAVITY_BRIDGE_SANDBOX` | `false` | Enable sandbox mode |
+| `ANTIGRAVITY_BRIDGE_MODEL` | _(agy default)_ | Default model override |
+| `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` | _(empty = unrestricted)_ | Directory allowlist (comma/colon-separated) |
+| `ANTIGRAVITY_BRIDGE_HEALTH_CHECK` | `true` | Cached `agy --version` preflight |
+| `ANTIGRAVITY_BRIDGE_MAX_RETRIES` | `2` | Retries on transient failures |
+| `ANTIGRAVITY_BRIDGE_RETRY_BACKOFF_BASE` | `0.5` | Exponential backoff base (s) |
+| `ANTIGRAVITY_BRIDGE_MAX_QUERY_LENGTH` | `100000` | Max prompt length (chars) |
+| `ANTIGRAVITY_BRIDGE_LOG_LEVEL` | `INFO` | Logging level |
+| `ANTIGRAVITY_BRIDGE_LOG_FORMAT` | `text` | `text` or `json` |
 | `ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_COUNT` | `30` | Max files in inline mode |
 | `ANTIGRAVITY_BRIDGE_MAX_INLINE_TOTAL_BYTES` | `1048576` | Max total inline payload (1MB) |
 | `ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_BYTES` | `524288` | Max per-file inline size (512KB) |
@@ -123,20 +151,25 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 ## MCP Tools Available
 
 ### `agy_consult`
-- **Purpose**: Direct CLI bridge for simple queries
-- **Parameters**: `query`, `directory`, `timeout_seconds`
+- **Purpose**: Direct CLI bridge for simple queries (async)
+- **Parameters**: `query`, `directory`, `timeout_seconds`, `model`, `add_dirs`, `conversation_id`, `continue_last`
 - **Use Case**: General questions, code analysis without file attachments
 
 ### `agy_consult_with_files`
-- **Purpose**: CLI bridge with file attachments for detailed analysis
-- **Parameters**: `query`, `directory`, `files`, `timeout_seconds`, `mode`
+- **Purpose**: CLI bridge with file attachments for detailed analysis (async)
+- **Parameters**: `query`, `directory`, `files`, `timeout_seconds`, `mode`, `model`, `add_dirs`, `conversation_id`, `continue_last`
 - **Modes**: `"inline"` (default) or `"at_command"`
 - **Use Case**: File-specific analysis, multi-file comparisons, code reviews
 
 ### `agy_web_search`
-- **Purpose**: Web search queries with Antigravity CLI
+- **Purpose**: Web search queries with Antigravity CLI (async)
 - **Parameters**: `query`, `directory`, `timeout_seconds`
 - **Use Case**: Current information, latest docs, recent changes
+
+### `agy_list_models`
+- **Purpose**: List models available to the Antigravity CLI (async, wraps `agy models`)
+- **Parameters**: none
+- **Use Case**: Discover selectable models before passing `model` to other tools
 
 ## Error Handling & Troubleshooting
 

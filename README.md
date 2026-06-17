@@ -11,9 +11,10 @@ A lightweight MCP (Model Context Protocol) server that enables AI coding assista
 ## Features
 
 - **Direct Antigravity CLI Integration**: Zero API costs using the official `agy` CLI
-- **Three MCP Tools**: Basic queries, file analysis, and web search capabilities
-- **Stateless Operation**: No sessions, caching, or complex state management
-- **Production Ready**: Robust error handling with configurable timeouts
+- **Four MCP Tools**: Basic queries, file analysis, web search, and model listing
+- **Stateless Operation**: No sessions, caching, or complex state management (optional conversation continuation is caller-driven)
+- **Production Ready**: Async, non-blocking execution with retries, health checks, structured logging, and metrics
+- **Secure by Default**: Path containment, directory allowlisting, query validation, and binary-file guards; permission-skipping is opt-in
 - **Minimal Dependencies**: Only requires `mcp>=1.0.0` and Antigravity CLI
 - **Easy Deployment**: Support for both `uvx` and traditional `pip` installation
 - **Universal MCP Compatibility**: Works with Claude Code, Cursor, VS Code, Windsurf, Cline, Void, Cherry Studio, Augment, Roo Code, Zencoder, and any MCP-compatible client
@@ -69,13 +70,23 @@ All configuration is done through environment variables prefixed with `ANTIGRAVI
 |---|---|---|
 | `ANTIGRAVITY_BRIDGE_TIMEOUT` | `120` | Global timeout override (seconds) |
 | `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `120` | Module-level default timeout |
-| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `true` | Add `--dangerously-skip-permissions` for MCP automation |
+| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `false` | Add `--dangerously-skip-permissions`. **Opt-in** (security). |
 | `ANTIGRAVITY_BRIDGE_SANDBOX` | `false` | Add `--sandbox` for restricted execution |
+| `ANTIGRAVITY_BRIDGE_MODEL` | _(agy default)_ | Default model override for consult tools |
+| `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` | _(empty = unrestricted)_ | Comma/colon-separated directory allowlist |
+| `ANTIGRAVITY_BRIDGE_HEALTH_CHECK` | `true` | Cached one-time `agy --version` preflight |
+| `ANTIGRAVITY_BRIDGE_MAX_RETRIES` | `2` | Retries on transient failures (0 disables) |
+| `ANTIGRAVITY_BRIDGE_RETRY_BACKOFF_BASE` | `0.5` | Exponential backoff base (seconds) |
+| `ANTIGRAVITY_BRIDGE_MAX_QUERY_LENGTH` | `100000` | Max prompt length (chars) |
+| `ANTIGRAVITY_BRIDGE_LOG_LEVEL` | `INFO` | Logging level |
+| `ANTIGRAVITY_BRIDGE_LOG_FORMAT` | `text` | `text` or `json` (structured) |
 | `ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_COUNT` | `30` | Max files in inline mode |
 | `ANTIGRAVITY_BRIDGE_MAX_INLINE_TOTAL_BYTES` | `1048576` (1MB) | Max total inline payload |
 | `ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_BYTES` | `524288` (512KB) | Max per-file inline size |
 | `ANTIGRAVITY_BRIDGE_INLINE_HEAD_BYTES` | `65536` (64KB) | Head chunk for truncated files |
 | `ANTIGRAVITY_BRIDGE_INLINE_TAIL_BYTES` | `32768` (32KB) | Tail chunk for truncated files |
+
+> **Security note:** `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` now defaults to `false`. To restore fully automated MCP behavior (auto-approve agy tool permissions), set it to `true`. The allowlist (`ANTIGRAVITY_BRIDGE_ALLOWED_DIRS`) is empty by default, so full-project investigation is unrestricted; set it to lock the server to specific workspace roots.
 
 **Timeout example:**
 ```bash
@@ -91,6 +102,10 @@ Direct CLI bridge for simple queries.
 - `query` (string, required): The question or prompt to send to Antigravity
 - `directory` (string, required): Working directory for the query
 - `timeout_seconds` (int, optional): Override execution timeout for this request
+- `model` (string, optional): Model override (e.g. `"gemini-3.5-flash"`)
+- `add_dirs` (list, optional): Extra directories to attach to the workspace
+- `conversation_id` (string, optional): Resume a specific conversation by ID
+- `continue_last` (bool, optional): Continue the most recent conversation
 
 **Example:**
 ```python
@@ -106,9 +121,13 @@ CLI bridge with file attachments for detailed analysis.
 - `files` (list, required): List of file paths relative to the directory
 - `timeout_seconds` (int, optional): Override execution timeout
 - `mode` (string, optional): `"inline"` (default) or `"at_command"`
+- `model` (string, optional): Model override
+- `add_dirs` (list, optional): Extra directories to attach to the workspace
+- `conversation_id` (string, optional): Resume a specific conversation by ID
+- `continue_last` (bool, optional): Continue the most recent conversation
 
 **File Modes:**
-- `inline` — streams truncated file snippets directly in the prompt
+- `inline` — streams truncated file snippets directly in the prompt (binary files are skipped)
 - `at_command` — emits `@path` directives so Antigravity CLI resolves files itself
 
 **Example:**
@@ -132,6 +151,16 @@ Queries with web search context. Best-effort — the model decides when to searc
 **Example:**
 ```python
 agy_web_search(query="latest Python 3.13 features")
+```
+
+### `agy_list_models`
+List the models available to the Antigravity CLI (wraps `agy models`).
+
+**Parameters:** none
+
+**Example:**
+```python
+agy_list_models()
 ```
 
 ## Multi-Client Support
@@ -253,12 +282,15 @@ Zencoder menu → `Tools` → `Add Custom MCP`
 ### Module Structure
 ```
 src/
-├── __init__.py      # Package entry point, version
-├── __main__.py      # Module execution entry point
-├── config.py        # Constants and environment variable configuration
-├── cli.py           # Subprocess calls to agy
-├── files.py         # File handling (inline, @-command, truncation)
-└── tools.py         # MCP tool definitions (FastMCP)
+├── __init__.py        # Package entry point, single-source version
+├── __main__.py        # Module execution entry point
+├── config.py          # Validated Settings + environment variables
+├── security.py        # Path containment, allowlist, query/binary validation
+├── files.py           # File handling (inline, @-command, truncation)
+├── command.py         # Typed agy argv builder (AgyCommand)
+├── cli.py             # Async subprocess execution, retry, health check
+├── observability.py   # Structured logging (text/JSON), request IDs, metrics
+└── tools.py           # MCP tool definitions (FastMCP, async)
 ```
 
 ### File Handling Safeguards
@@ -302,10 +334,13 @@ python3 -c "import src; print(f'v{src.__version__}')"
 |---|---|
 | "Antigravity CLI not found" | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` |
 | "Authentication required" | Verify Antigravity authentication |
+| "Health check failed" | Run `agy --version`; verify install/auth, or set `ANTIGRAVITY_BRIDGE_HEALTH_CHECK=false` |
 | "Timed out after X seconds" | Increase timeout or simplify query |
 | "Directory does not exist" | Use absolute paths or verify directory |
+| "Directory not in allowlist" | Add it to `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` (or leave empty for unrestricted) |
 | "No files provided" | Provide at least one valid file path |
 | "Unsupported files mode" | Use `"inline"` or `"at_command"` |
+| "Skipped binary file" / "outside working directory" | Expected guards — inline mode skips binaries and path escapes |
 
 ## Contributing
 

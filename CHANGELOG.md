@@ -5,6 +5,33 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-06-17
+
+### Added
+- **New tool `agy_list_models`** — exposes the `agy models` subcommand so clients can enumerate available models.
+- **Model selection** — `agy_consult` and `agy_consult_with_files` accept a `model` parameter; global default via `ANTIGRAVITY_BRIDGE_MODEL`.
+- **Conversation continuation** — both consult tools accept `conversation_id` and `continue_last` (forwarded as `--conversation` / `--continue`). The server stays stateless; `agy` holds the conversation.
+- **Extra workspace directories** — `add_dirs` parameter attaches additional `--add-dir` workspaces.
+- **`--print-timeout` alignment** — agy's internal print-mode wait is now aligned with the per-call timeout, preventing mid-run SIGKILLs.
+- **Async execution core** — CLI execution uses `asyncio.create_subprocess_exec`; MCP tools are async and non-blocking. Sync wrappers preserve the existing public API.
+- **Health-check preflight** — cached one-time `agy --version` probe (`ANTIGRAVITY_BRIDGE_HEALTH_CHECK`, default on).
+- **Bounded retry with exponential backoff** on transient failures only (`ANTIGRAVITY_BRIDGE_MAX_RETRIES`, `ANTIGRAVITY_BRIDGE_RETRY_BACKOFF_BASE`). Authentication and non-transient errors are never retried.
+- **Observability** — structured logging (text/JSON via `ANTIGRAVITY_BRIDGE_LOG_LEVEL` / `ANTIGRAVITY_BRIDGE_LOG_FORMAT`), per-call request IDs, and `agy.call` metrics (duration, success, timeout).
+- **Security module** — path containment (symlink-aware), directory allowlisting (`ANTIGRAVITY_BRIDGE_ALLOWED_DIRS`, default empty = unrestricted), query length/control-character validation (`ANTIGRAVITY_BRIDGE_MAX_QUERY_LENGTH`), and binary-file skipping in inline mode.
+- **Graceful shutdown** — `SIGTERM`/`SIGINT` handlers and fail-fast config validation at startup.
+- **Tooling** — ruff, black, mypy (strict), and pytest-cov (≥90% gate) configured; CI now runs lint + type + coverage across Python 3.10–3.13.
+- **Typed command builder** — `src/command.py` centralizes `agy` argv construction.
+
+### Changed
+- **`ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` now defaults to `false`** (security). MCP automation users opt in explicitly.
+- Version is now a single source of truth (`dynamic = ["version"]` read from `src.__version__`).
+
+### Fixed
+- **Inline-mode path escape** — `prepare_inline_payload` no longer reads files that resolve outside the working directory (including via symlinks).
+- **agy/subprocess timeout mismatch** — resolved by passing `--print-timeout`.
+
+---
+
 ## [1.0.2] - 2026-05-22
 
 ### Fixed
@@ -97,6 +124,7 @@ src/
 - **Issues**: [https://github.com/FojleRabbiRabib/Antigravity-Bridge/issues](https://github.com/FojleRabbiRabib/Antigravity-Bridge/issues)
 - **MCP Protocol**: [https://modelcontextprotocol.io/](https://modelcontextprotocol.io/)
 
+[1.1.0]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.1.0
 [1.0.2]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.2
 [1.0.1]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.1
 [1.0.0]: https://github.com/FojleRabbiRabib/Antigravity-Bridge/releases/tag/v1.0.0
