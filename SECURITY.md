@@ -4,8 +4,8 @@
 
 | Version   | Supported          |
 | --------- | ------------------ |
-| 1.1.x     | :white_check_mark: |
-| < 1.1     | :x: (best effort)  |
+| 1.2.x     | :white_check_mark: |
+| < 1.2     | :x: (best effort)  |
 
 Only the latest released line receives security fixes.
 

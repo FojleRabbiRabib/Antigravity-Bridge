@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-06-19
+
 ### Fixed
 - **Critical: context (`ctx`) injection broken by postponed annotations.** `src/tools.py` used `from __future__ import annotations`, so FastMCP saw each tool's `ctx: Context` parameter as a *string* annotation, failed its context-kwarg detection, and exposed `ctx` in the input schema as a **required user argument** that is never supplied. The result: **every** `tools/call` failed with `ctx - Field required`, even valid ones. Removed the future import so annotations resolve at definition time; `ctx` is now correctly detected as the injected context kwarg and no longer appears in any tool's schema. *(Regression introduced by the SDK-features work below, caught before release.)*
 - **Headless `--print` hang (agy upstream bug [#318](https://github.com/google-antigravity/antigravity-cli/issues/318))**: `agy --print` produced no output and hung when spawned from a non-TTY/headless subprocess (exactly how the bridge runs it), so every consult/web-search call returned `"No output from Antigravity CLI"`. Print-mode invocations now run under an allocated pseudo-TTY (`src/cli.py:_run_agy_pty`): the slave end is handed to `agy`, the merged stream is read from master, ANSI escapes and PTY-added carriage returns are stripped, and timeout/teardown kill the whole process group. `agy models` and the `--version` health probe keep using plain pipes (they work headless).
