@@ -107,10 +107,10 @@ def test_coerce_timeout_invalid_falls_back():
     assert cfg.coerce_timeout("bad") == 600
 
 
-def test_skip_permissions_defaults_false():
+def test_skip_permissions_defaults_true():
     import src.config as cfg
 
-    assert cfg.should_skip_permissions() is False
+    assert cfg.should_skip_permissions() is True
 
 
 def test_skip_permissions_disabled(monkeypatch):
@@ -168,7 +168,7 @@ def test_settings_defaults():
     from src.config import load_settings
 
     s = load_settings()
-    assert s.skip_permissions is False
+    assert s.skip_permissions is True
     assert s.sandbox is False
     assert s.model == ""
     assert s.allowed_dirs == ()
@@ -182,11 +182,11 @@ def test_settings_defaults():
     assert s.default_timeout == 600
 
 
-def test_settings_skip_permissions_opt_in(monkeypatch):
-    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS", "true")
+def test_settings_skip_permissions_can_disable(monkeypatch):
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS", "false")
     from src.config import load_settings
 
-    assert load_settings().skip_permissions is True
+    assert load_settings().skip_permissions is False
 
 
 def test_settings_allowed_dirs_parsed(monkeypatch):

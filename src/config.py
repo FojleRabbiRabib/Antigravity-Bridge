@@ -73,8 +73,13 @@ def _env_float(name: str, default: float) -> float:
 # ---------------------------------------------------------------------------
 
 DEFAULT_TIMEOUT: Final[int] = _env_int("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT", 600)
-# Security: auto-skipping permissions is opt-in (default False).
-SKIP_PERMISSIONS: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS", "false")
+# Auto-skip agy tool permission prompts. Default True: agy's print mode cannot
+# ask anyone to approve tool use, so without this a non-trivial consult or
+# investigation hits a permission gate and bails after planning (returns only
+# the "I will ..." narration, no result). Defaulting on lets consultations and
+# investigations actually run. To lock the server down, set False AND configure
+# ANTIGRAVITY_BRIDGE_ALLOWED_DIRS.
+SKIP_PERMISSIONS: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS", "true")
 SANDBOX: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_SANDBOX", "false")
 
 MAX_INLINE_FILE_COUNT: Final[int] = _env_int(
@@ -106,10 +111,15 @@ HEALTH_CHECK: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_HEALTH_CHECK", "true")
 ALIGN_PRINT_TIMEOUT: Final[str] = os.getenv(
     "ANTIGRAVITY_BRIDGE_ALIGN_PRINT_TIMEOUT", "true"
 )
-# Run ``agy --print`` under a pseudo-TTY. agy's print mode hangs in non-TTY /
-# headless subprocess environments (upstream bug #318), which is exactly how the
-# bridge spawns it. Default on; can be disabled where PTYs are unavailable.
-FORCE_TTY: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "true")
+# Run ``agy --print`` under a pseudo-TTY. This was added to dodge a hang in
+# non-TTY / headless subprocess environments (upstream bug #318, observed on
+# agy 1.0.6 / Windows). On current agy (1.0.10+) on Linux, ``agy -p`` runs
+# headless over plain pipes without hanging, and under a PTY agy enters TUI
+# mode and can exit without flushing the response to the stream — producing
+# the empty-output failure. Plain pipes are therefore the more reliable path,
+# so the default is OFF. Re-enable (``true``) only if your agy build hangs in
+# print mode headless.
+FORCE_TTY: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "false")
 
 
 # ---------------------------------------------------------------------------
@@ -206,7 +216,7 @@ def load_settings() -> Settings:
     return Settings(
         default_timeout=default_timeout,
         skip_permissions=_parse_bool(
-            os.getenv("ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS", "false")
+            os.getenv("ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS", "true")
         ),
         sandbox=_parse_bool(os.getenv("ANTIGRAVITY_BRIDGE_SANDBOX", "false")),
         model=os.getenv("ANTIGRAVITY_BRIDGE_MODEL", ""),
@@ -222,7 +232,7 @@ def load_settings() -> Settings:
         align_print_timeout=_parse_bool(
             os.getenv("ANTIGRAVITY_BRIDGE_ALIGN_PRINT_TIMEOUT", "true")
         ),
-        force_tty=_parse_bool(os.getenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "true")),
+        force_tty=_parse_bool(os.getenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "false")),
         max_inline_file_count=_parse_int(
             "ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_COUNT",
             os.getenv("ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_COUNT", "30"),

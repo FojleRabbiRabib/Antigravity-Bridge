@@ -137,12 +137,12 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 |---|---|---|
 | `ANTIGRAVITY_BRIDGE_TIMEOUT` | `600` | Global timeout override (seconds) |
 | `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `600` | Module-level default timeout |
-| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `false` | Add `--dangerously-skip-permissions` (opt-in) |
+| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `true` | Add `--dangerously-skip-permissions`. Default **on** so consults/investigations actually run — agy print mode can't prompt for tool approvals, so without it a non-trivial query bails after planning (returns only the "I will…" narration). Set `false` **and** configure `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` to lock the server down. |
 | `ANTIGRAVITY_BRIDGE_SANDBOX` | `false` | Enable sandbox mode |
 | `ANTIGRAVITY_BRIDGE_MODEL` | _(agy default)_ | Default model override |
 | `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` | _(empty = unrestricted)_ | Directory allowlist (comma/colon-separated) |
 | `ANTIGRAVITY_BRIDGE_HEALTH_CHECK` | `true` | Cached `agy --version` preflight |
-| `ANTIGRAVITY_BRIDGE_FORCE_TTY` | `true` | Run `agy --print` under a pseudo-TTY (works around agy upstream bug #318, where print mode hangs in headless subprocesses). Disable where PTYs are unavailable. |
+| `ANTIGRAVITY_BRIDGE_FORCE_TTY` | `false` | Run `agy --print` over plain pipes by default (reliable on current agy; a PTY forces TUI mode where agy can exit without flushing the response). Set `true` only if your agy build hangs headless (upstream bug #318, agy ≤1.0.6 / Windows). |
 | `ANTIGRAVITY_BRIDGE_MAX_RETRIES` | `2` | Retries on transient failures |
 | `ANTIGRAVITY_BRIDGE_RETRY_BACKOFF_BASE` | `0.5` | Exponential backoff base (s) |
 | `ANTIGRAVITY_BRIDGE_MAX_QUERY_LENGTH` | `100000` | Max prompt length (chars) |
@@ -199,7 +199,7 @@ All four tools return a structured `AgyResult` (`{success, output, model, warnin
 - **"Authentication required"**: Verify Antigravity authentication
 - **"Timed out after X seconds"**: Increase timeout or simplify query
 - **"Directory does not exist"**: Use absolute paths or verify directory
-- **"No output from Antigravity CLI"**: Should no longer occur (fixed via PTY). If it does, check `ANTIGRAVITY_BRIDGE_FORCE_TTY` and agy health.
+- **"Antigravity CLI produced no output" (structured `ToolError`)**: `agy --print` exited 0 with empty stdout — most often because it ran under a PTY (`FORCE_TTY=true`), which puts agy in TUI mode where it can exit without flushing the response. The default (`FORCE_TTY=false`, plain pipes) avoids this. The bridge surfaces the empty result as a real error (not a silent success); retry, or set `FORCE_TTY=false`. (Not to be confused with upstream #318, which is a *hang* on older agy/Windows.)
 
 ## Development Guidelines
 

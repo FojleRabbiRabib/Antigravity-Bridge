@@ -2,10 +2,7 @@
   "mcpServers": {
     "antigravity-bridge": {
       "command": "python3",
-      "args": ["-m", "src"],
-      "env": {
-        "ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS": "true"
-      }
+      "args": ["-m", "src"]
     }
   }
 }

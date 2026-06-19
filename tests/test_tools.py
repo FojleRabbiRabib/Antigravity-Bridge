@@ -1,3 +1,4 @@
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -128,10 +129,16 @@ async def test_agy_consult_forwards_model(tmp_path, monkeypatch):
 async def test_agy_consult_rejects_unsupported_model(tmp_path, monkeypatch):
     import src.tools as tools
 
-    tools._models_cache = ["gemini-3.5-flash"]
+    tools._models_cache = ["Gemini 3.5 Flash (Low)", "Claude Sonnet 4.6 (Thinking)"]
     with pytest.raises(tools.ToolError) as exc_info:
-        await tools.agy_consult("Hi", str(tmp_path), None, model="invalid-model")
-    assert "not supported" in str(exc_info.value)
+        await tools.agy_consult("Hi", str(tmp_path), None, model="sonnet")
+    msg = str(exc_info.value)
+    # Names the bad value, explains the exact-name rule, points at the list
+    # tool, and enumerates the supported models.
+    assert "'sonnet'" in msg
+    assert "agy_list_models" in msg
+    assert "exact" in msg.lower()
+    assert "Claude Sonnet 4.6 (Thinking)" in msg
 
 
 async def test_validate_model_accepts_supported(tmp_path, monkeypatch):
@@ -175,6 +182,40 @@ async def test_agy_consult_raises_on_failure(tmp_path, monkeypatch):
     monkeypatch.setattr(tools.cli, "execute_antigravity_simple_outcome_async", fake)
     with pytest.raises(tools.ToolError):
         await tools.agy_consult("Hi", str(tmp_path), None)
+
+
+async def test_agy_consult_empty_output_raises_toolerror(tmp_path, monkeypatch):
+    """agy returning no output must surface as a structured ToolError, not a
+    success result — regression for the silent 'No output from Antigravity
+    CLI' success-string bug."""
+    import src.tools as tools
+
+    async def fake(*a, **k):
+        return _err(
+            "Antigravity CLI produced no output. This is a known intermittent "
+            "issue with `agy --print`; please retry the call."
+        )
+
+    monkeypatch.setattr(tools.cli, "execute_antigravity_simple_outcome_async", fake)
+    with pytest.raises(tools.ToolError) as exc_info:
+        await tools.agy_consult("Hi", str(tmp_path), None)
+    assert "no output" in str(exc_info.value).lower()
+
+
+async def test_fetch_model_names_empty_when_models_fails(tmp_path, monkeypatch):
+    """A failing `agy models` must yield an empty list — never parse the error
+    message as model names."""
+    import src.tools as tools
+    from src.cli import AgyOutcome
+
+    async def fake_models(*a, **k):
+        return AgyOutcome(success=False, output="Antigravity CLI produced no output.")
+
+    monkeypatch.setattr(
+        tools.cli, "execute_antigravity_models_outcome_async", fake_models
+    )
+    tools._models_cache = None
+    assert await tools._fetch_model_names() == []
 
 
 async def test_agy_consult_logs_to_context(tmp_path, monkeypatch):
@@ -486,9 +527,11 @@ async def test_fetch_model_names_caches(tmp_path, monkeypatch):
 
     async def fake_models():
         calls.append(1)
-        return "Model A\nModel B"
+        return _ok("Model A\nModel B")
 
-    monkeypatch.setattr(tools.cli, "execute_antigravity_models_async", fake_models)
+    monkeypatch.setattr(
+        tools.cli, "execute_antigravity_models_outcome_async", fake_models
+    )
     first = await tools._fetch_model_names()
     second = await tools._fetch_model_names()
     assert first == ["Model A", "Model B"]
@@ -496,13 +539,39 @@ async def test_fetch_model_names_caches(tmp_path, monkeypatch):
     assert len(calls) == 1  # cached after first call
 
 
+async def test_fetch_model_names_no_thundering_herd(tmp_path, monkeypatch):
+    """Concurrent cold-start calls must not each spawn ``agy models`` — the
+    fetch lock dedupes them (mirrors the health-check lock)."""
+    import src.tools as tools
+
+    calls = []
+
+    async def fake_models():
+        calls.append(1)
+        await asyncio.sleep(0.02)  # widen the race window
+        return _ok("Model A\nModel B")
+
+    monkeypatch.setattr(
+        tools.cli, "execute_antigravity_models_outcome_async", fake_models
+    )
+    tools._models_cache = None
+    tools._models_lock = asyncio.Lock()  # fresh lock for test isolation
+    a, b = await asyncio.gather(tools._fetch_model_names(), tools._fetch_model_names())
+    assert a == b == ["Model A", "Model B"]
+    assert len(calls) == 1  # only one fetch despite two concurrent callers
+
+
 async def test_fetch_model_names_rejects_error_output(tmp_path, monkeypatch):
     import src.tools as tools
 
     async def fake_models():
-        return "Error: Antigravity CLI not found. Install with: ..."
+        # success=True but the body is an error banner — the guard must still
+        # reject it rather than parse "Error: ..." as a model name.
+        return _ok("Error: Antigravity CLI not found. Install with: ...")
 
-    monkeypatch.setattr(tools.cli, "execute_antigravity_models_async", fake_models)
+    monkeypatch.setattr(
+        tools.cli, "execute_antigravity_models_outcome_async", fake_models
+    )
     assert await tools._fetch_model_names() == []
 
 
@@ -510,9 +579,11 @@ async def test_completion_suggests_models_for_model_arg(tmp_path, monkeypatch):
     import src.tools as tools
 
     async def fake_models():
-        return "Model A\nModel B"
+        return _ok("Model A\nModel B")
 
-    monkeypatch.setattr(tools.cli, "execute_antigravity_models_async", fake_models)
+    monkeypatch.setattr(
+        tools.cli, "execute_antigravity_models_outcome_async", fake_models
+    )
     res = await tools._complete_arguments(None, SimpleNamespace(name="model"), None)
     assert res is not None
     assert "Model A" in res.values
@@ -576,7 +647,7 @@ async def test_fetch_model_names_swallows_exception(monkeypatch):
     async def boom():
         raise RuntimeError("agy exploded")
 
-    monkeypatch.setattr(tools.cli, "execute_antigravity_models_async", boom)
+    monkeypatch.setattr(tools.cli, "execute_antigravity_models_outcome_async", boom)
     assert await tools._fetch_model_names() == []
 
 

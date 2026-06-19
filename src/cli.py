@@ -36,6 +36,18 @@ HEALTH_FAILED_HINT = (
     "Verify agy is installed and authenticated."
 )
 
+# agy sometimes exits 0 with empty stdout in `--print` mode (a known headless /
+# long-run output-drop, same family as upstream bug #318). That is not a real
+# success — there is no response to return — so we surface this actionable
+# failure instead of a silent, misleading "success" string. The wording
+# contains "no output" so it stays greppable (and could be opted into retry).
+NO_OUTPUT_MESSAGE = (
+    "Antigravity CLI produced no output. This is a known intermittent issue "
+    "with `agy --print` in headless/long-running contexts (the response can "
+    "be dropped). Please retry the call; if it persists, try a shorter prompt "
+    "or a different model."
+)
+
 # Cached result of the one-time agy --version probe. Only success is cached;
 # failures are re-checked so the server recovers if agy becomes healthy later.
 _health_cache: bool | None = None
@@ -278,9 +290,17 @@ async def _run_agy_pty(cmd: list[str], cwd: str, timeout: int) -> _ExecResult:
             with contextlib.suppress(OSError):
                 os.close(slave_fd)
 
+        # Read the stream to EOF, then reap the child — under a SINGLE timeout
+        # budget. Two separate ``wait_for(..., timeout)`` calls would each
+        # consume the full budget, so a child that holds the slave open could
+        # hang the task for up to 2x timeout before the teardown fires.
+        async def _read_and_reap() -> bytes:
+            data = await _read_fd_all(master_fd)
+            await proc.wait()
+            return data
+
         try:
-            data = await asyncio.wait_for(_read_fd_all(master_fd), timeout=timeout)
-            await asyncio.wait_for(proc.wait(), timeout=timeout)
+            data = await asyncio.wait_for(_read_and_reap(), timeout=timeout)
         except asyncio.TimeoutError:
             _terminate_process_group(proc)
             with contextlib.suppress(Exception):
@@ -304,8 +324,12 @@ async def _run_agy_pty(cmd: list[str], cwd: str, timeout: int) -> _ExecResult:
     text = _normalize_pty_output(data).strip()
     returncode = proc.returncode if proc is not None else 0
     if returncode == 0:
-        output = text if text else "No output from Antigravity CLI"
-        return _ExecResult(True, output, "")
+        if text:
+            return _ExecResult(True, text, "")
+        # Clean exit but nothing on the stream — the known `--print` output
+        # drop. This is not a usable success; return a structured failure so
+        # callers see an actionable error rather than a silent empty result.
+        return _ExecResult(False, NO_OUTPUT_MESSAGE, "")
     error_msg = text or f"Exit code {returncode}"
     if _is_auth_error(error_msg):
         return _ExecResult(
@@ -368,8 +392,12 @@ async def _run_agy_async(
     if proc.returncode == 0:
         if stderr.strip():
             logger.debug("agy emitted stderr on success: %s", stderr.strip())
-        output = stdout.strip() if stdout.strip() else "No output from Antigravity CLI"
-        return _ExecResult(True, output, stderr)
+        stdout_s = stdout.strip()
+        if stdout_s:
+            return _ExecResult(True, stdout_s, stderr)
+        # Clean exit, empty stdout — the known `--print` output drop. Surface
+        # as a structured failure (see _run_agy_pty for the full rationale).
+        return _ExecResult(False, NO_OUTPUT_MESSAGE, stderr)
 
     error_msg = stderr.strip() or f"Exit code {proc.returncode}"
     if stdout.strip():

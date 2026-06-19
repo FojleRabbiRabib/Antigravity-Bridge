@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [1.2.1] - 2026-06-20
+
+### Changed
+- **`ANTIGRAVITY_BRIDGE_FORCE_TTY` now defaults to `false`** (PTY is opt-in). The PTY path was added to dodge upstream bug [#318](https://github.com/google-antigravity/antigravity-cli/issues/318) — `agy -p` *hanging* indefinitely in non-TTY/headless environments — observed on agy 1.0.6 / Windows. On current agy (1.0.10+) on Linux, `agy -p` runs headless over plain pipes without hanging (verified this session: short, large-output, and thinking-model calls all captured cleanly). Worse, running `agy` under a PTY forces TUI mode, where agy can exit without flushing the response to the stream — the likely root cause of the empty-output failure on long calls. Plain pipes (`agy`'s true print mode, which writes the response to stdout by design) are now the default. Set `ANTIGRAVITY_BRIDGE_FORCE_TTY=true` only if your agy build hangs in print mode headless.
+- **`ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` now defaults to `true`** (was `false` since 1.1.0). agy's print mode cannot prompt anyone to approve tool use, so with the default `false` a non-trivial consult or investigation hits a permission gate and bails after planning — returning only the "I will…" narration instead of a result (confirmed: same exhaustive prompt returned a 10,842-char report with `true` vs an 84s plan-only bail with `false`). Defaulting `true` restores the bridge's core consult/investigate capability. To lock the server down, set `false` **and** configure `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS`.
+
+### Fixed
+- **Empty output was returned as a success.** When `agy --print` exits 0 with empty stdout (defense-in-depth for the rare cases that still occur on any path), the bridge used to surface it as a *successful* `AgyResult` whose `output` was the literal `"No output from Antigravity CLI"` — a misleading success with **no structured error** (it "just stopped"). Both the PTY (`_run_agy_pty`) and pipe (`_run_agy_async`) execution paths now treat clean-exit-with-empty-output as a structured failure (`success=False`) carrying an actionable, retry-guiding message, so the tools raise a proper MCP `ToolError`. *(Corrects an earlier misattribution: this is not the same bug as #318, which is a hang — `agy` here exits cleanly with an empty stream. The bridge's PTY capture was independently verified lossless up to 1 MB; the empty bytes originate in `agy`.)*
+- **Failing `agy models` could be parsed as model names.** `_fetch_model_names` now reads the structured `AgyOutcome` and returns `[]` on failure, instead of splitting the error text into lines (previously a no-output `agy models` would seed the model cache with the literal error string).
+- **Clearer unsupported-model error.** Passing a slug or short ID (e.g. `sonnet`, `claude-sonnet-4-6`) now raises a `ToolError` that explains the `model` parameter requires the exact full name (including qualifiers like `(Thinking)`/`(Medium)`), points to the `agy_list_models` tool, and enumerates the supported models.
+- **PTY path could hang up to 2× the timeout.** `_run_agy_pty` used two separate `asyncio.wait_for(..., timeout)` calls (read-to-EOF, then `proc.wait()`); each consumed the full budget, so a child holding the slave open could block for up to `2 * timeout` before teardown. The read and reap now run under a single `wait_for`, bounding the total to one timeout. *(Found by an exhaustive self-investigation run through the bridge itself.)*
+- **Model-cache thundering herd on cold start.** Concurrent first requests each spawned their own `agy models` subprocess. `_fetch_model_names` now serializes the cold-start fetch behind an `asyncio.Lock` with a double-checked cache (mirrors the existing `_health_lock` on the version probe).
+
 ## [1.2.0] - 2026-06-19
 
 ### Fixed

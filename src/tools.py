@@ -10,6 +10,7 @@ SDK features in use: structured output (Pydantic :class:`AgyResult`), proper
 and ``@mcp.completion``.
 """
 
+import asyncio
 import json
 import signal
 import sys
@@ -108,6 +109,11 @@ class AgyResult(BaseModel):
 # spawn a subprocess on every request. Refreshed only on process start.
 _models_cache: list[str] | None = None
 
+# Serializes the cold-start fetch so concurrent first requests (e.g. a client
+# firing several tools at once on startup) do not stampede ``agy models`` —
+# mirrors the ``_health_lock`` guard on the version probe in ``cli.py``.
+_models_lock = asyncio.Lock()
+
 
 async def _fetch_model_names() -> list[str]:
     """Return the model names advertised by ``agy models`` (cached, best-effort).
@@ -119,17 +125,27 @@ async def _fetch_model_names() -> list[str]:
     global _models_cache
     if _models_cache is not None:
         return _models_cache
-    try:
-        raw = await cli.execute_antigravity_models_async()
-    except Exception:  # never let model lookup break the tool itself
-        return []
-    stripped = raw.strip()
-    # Don't parse error messages or empty output as model names.
-    if not stripped or stripped.lower().startswith("error:"):
-        return []
-    names = [line.strip() for line in stripped.splitlines() if line.strip()]
-    _models_cache = names
-    return names
+    async with _models_lock:
+        # Re-check inside the lock: a racing coroutine may have populated the
+        # cache while we waited to acquire it.
+        if _models_cache is not None:
+            return _models_cache
+        try:
+            outcome = await cli.execute_antigravity_models_outcome_async()
+        except Exception:  # never let model lookup break the tool itself
+            return []
+        # Use the structured outcome, not the bare string: a failed `agy models`
+        # (e.g. the no-output drop) must not have its error text parsed as model
+        # names.
+        if not outcome.success:
+            return []
+        stripped = outcome.output.strip()
+        # Don't parse error messages or empty output as model names.
+        if not stripped or stripped.lower().startswith("error:"):
+            return []
+        names = [line.strip() for line in stripped.splitlines() if line.strip()]
+        _models_cache = names
+        return names
 
 
 def _validate_query(query: str) -> None:
@@ -150,7 +166,12 @@ async def _validate_model(model: str) -> None:
     if model not in supported:
         supported_str = ", ".join(f"'{m}'" for m in supported)
         raise ToolError(
-            f"Model '{model}' is not supported. Supported models: {supported_str}"
+            f"Model '{model}' is not supported. The `model` parameter must be "
+            f"the exact, full model name (including any qualifier such as "
+            f"'(Thinking)' or '(Medium)') as returned by the `agy_list_models` "
+            f"tool — short IDs or slugs (e.g. 'sonnet', 'claude-sonnet-4-6') "
+            f"are rejected. Call `agy_list_models` to see the current list. "
+            f"Supported models: {supported_str}"
         )
 
 

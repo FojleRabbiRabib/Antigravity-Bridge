@@ -206,13 +206,16 @@ async def test_async_generic_error(tmp_path, monkeypatch):
     assert "Antigravity CLI Error: something went wrong" in out
 
 
-async def test_async_empty_output(tmp_path, monkeypatch):
+async def test_async_empty_output_is_failure(tmp_path, monkeypatch):
     import src.cli as cli
 
     monkeypatch.setattr(cli.shutil, "which", lambda _: "agy")
     _patch_exec(monkeypatch, _FakeProc(0, b"", b""))
-    out = await cli.execute_antigravity_simple_async("Hi", str(tmp_path))
-    assert "No output from Antigravity CLI" in out
+    outcome = await cli.execute_antigravity_simple_outcome_async("Hi", str(tmp_path))
+    # agy exiting 0 with empty stdout is the known `--print` output-drop; it
+    # must surface as a structured failure, not a misleading success string.
+    assert outcome.success is False
+    assert "no output" in outcome.output.lower()
 
 
 async def test_async_timeout(tmp_path, monkeypatch):
@@ -761,7 +764,7 @@ async def test_pty_happy_path_normalizes(monkeypatch, tmp_path):
     assert res.output == "Answer\nhere"
 
 
-async def test_pty_empty_output(monkeypatch, tmp_path):
+async def test_pty_empty_output_is_failure(monkeypatch, tmp_path):
     import src.cli as cli
 
     monkeypatch.setattr("pty.openpty", lambda: (42, 43))
@@ -777,8 +780,10 @@ async def test_pty_empty_output(monkeypatch, tmp_path):
 
     monkeypatch.setattr(cli, "_read_fd_all", fake_read)
     res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
-    assert res.success
-    assert res.output == "No output from Antigravity CLI"
+    # Empty output on a clean exit is the known `--print` drop; it must be a
+    # structured failure with an actionable message, not a success string.
+    assert res.success is False
+    assert "no output" in res.output.lower()
 
 
 async def test_pty_timeout_kills_process_group(monkeypatch, tmp_path):
@@ -846,7 +851,7 @@ async def test_pty_spawn_failure_closes_both_fds(monkeypatch, tmp_path):
 
 
 async def test_force_tty_true_routes_through_pty(monkeypatch, tmp_path):
-    """The print path honours ANTIGRAVITY_BRIDGE_FORCE_TTY=true (the default)."""
+    """The print path honours ANTIGRAVITY_BRIDGE_FORCE_TTY=true (opt-in)."""
     import src.cli as cli
 
     monkeypatch.setattr(cli.shutil, "which", lambda _: "agy")
@@ -862,6 +867,27 @@ async def test_force_tty_true_routes_through_pty(monkeypatch, tmp_path):
     out = await cli.execute_antigravity_simple_async("Hi", str(tmp_path))
     assert out == "OK"
     assert seen["use_pty"] is True
+
+
+async def test_force_tty_default_routes_through_pipes(monkeypatch, tmp_path):
+    """With FORCE_TTY unset, print mode runs over plain pipes (the default) —
+    PTY is opt-in only (it was added for the upstream #318 hang on agy 1.0.6 /
+    Windows; current agy runs headless without it, and a PTY can make agy exit
+    without flushing the response)."""
+    import src.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _: "agy")
+    monkeypatch.delenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", raising=False)
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_HEALTH_CHECK", "false")
+    seen = {}
+
+    async def fake_retry(cmd, cwd, timeout, settings, rid, *, use_pty=False):
+        seen["use_pty"] = use_pty
+        return cli._ExecResult(True, "OK", "")
+
+    monkeypatch.setattr(cli, "_run_with_retry", fake_retry)
+    await cli.execute_antigravity_simple_async("Hi", str(tmp_path))
+    assert seen["use_pty"] is False
 
 
 async def test_models_ignores_force_tty(monkeypatch, tmp_path):

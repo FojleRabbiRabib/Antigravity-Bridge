@@ -71,12 +71,12 @@ All configuration is done through environment variables prefixed with `ANTIGRAVI
 |---|---|---|
 | `ANTIGRAVITY_BRIDGE_TIMEOUT` | `600` | Global timeout override (seconds) |
 | `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `600` | Module-level default timeout |
-| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `false` | Add `--dangerously-skip-permissions`. **Opt-in** (security). |
+| `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `true` | Add `--dangerously-skip-permissions`. Default **on** so consults/investigations run (agy print mode can't prompt for approvals; without it a non-trivial query bails after planning). Set `false` + `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` to lock down. |
 | `ANTIGRAVITY_BRIDGE_SANDBOX` | `false` | Add `--sandbox` for restricted execution |
 | `ANTIGRAVITY_BRIDGE_MODEL` | _(agy default)_ | Default model override for consult tools |
 | `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` | _(empty = unrestricted)_ | Comma/colon-separated directory allowlist |
 | `ANTIGRAVITY_BRIDGE_HEALTH_CHECK` | `true` | Cached one-time `agy --version` preflight |
-| `ANTIGRAVITY_BRIDGE_FORCE_TTY` | `true` | Run `agy --print` under a pseudo-TTY (works around upstream headless-hang bug #318). Disable where PTYs are unavailable |
+| `ANTIGRAVITY_BRIDGE_FORCE_TTY` | `false` | Run `agy --print` over plain pipes by default (reliable on current agy). Set `true` to force a pseudo-TTY only if your agy build hangs headless (upstream bug #318, agy ≤1.0.6 / Windows) |
 | `ANTIGRAVITY_BRIDGE_ALIGN_PRINT_TIMEOUT` | `true` | Pass `--print-timeout` so `agy --print` aborts on its own when the bridge timeout elapses |
 | `ANTIGRAVITY_BRIDGE_MAX_RETRIES` | `2` | Retries on transient failures (0 disables) |
 | `ANTIGRAVITY_BRIDGE_RETRY_BACKOFF_BASE` | `0.5` | Exponential backoff base (seconds) |
@@ -89,7 +89,7 @@ All configuration is done through environment variables prefixed with `ANTIGRAVI
 | `ANTIGRAVITY_BRIDGE_INLINE_HEAD_BYTES` | `65536` (64KB) | Head chunk for truncated files |
 | `ANTIGRAVITY_BRIDGE_INLINE_TAIL_BYTES` | `32768` (32KB) | Tail chunk for truncated files |
 
-> **Security note:** `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` now defaults to `false`. To restore fully automated MCP behavior (auto-approve agy tool permissions), set it to `true`. The allowlist (`ANTIGRAVITY_BRIDGE_ALLOWED_DIRS`) is empty by default, so full-project investigation is unrestricted; set it to lock the server to specific workspace roots.
+> **Security note:** `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` defaults to `true` so consults/investigations actually execute — agy's print mode cannot prompt for tool approvals, and without it a non-trivial query bails after planning (returns only the "I will…" narration). To lock the server down, set it to `false` and configure the allowlist (`ANTIGRAVITY_BRIDGE_ALLOWED_DIRS`).
 
 **Timeout example:**
 ```bash
