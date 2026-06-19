@@ -47,14 +47,28 @@ ArgModelBase.model_config["extra"] = "forbid"
 _Ctx = Context[Any, Any, Any]
 
 # Surface usage guidance to MCP clients (shown by clients that render it).
+# Written to be *discoverable*: it states the value (a second, independent AI
+# model) and the situations that should trigger each tool, so a client model
+# reaches for these without an explicit instruction to do so.
 _INSTRUCTIONS = (
-    "Antigravity Bridge forwards prompts to the `agy` CLI (Antigravity). "
-    "Use `agy_consult` for plain queries, `agy_consult_with_files` to attach "
-    "file context, `agy_web_search` for current/web info, and "
-    "`agy_list_models` to see selectable models. `agy` is stateless on this "
-    "side; pass `conversation_id`/`continue_last` to resume an agy-held "
-    "conversation. Tools return a structured `AgyResult`; failures raise an "
-    "error result. Read `config://settings` for the live configuration."
+    "This server lets you consult OTHER AI models (Gemini, Claude, GPT) on "
+    "demand through the free Antigravity (`agy`) CLI — useful for a second "
+    "opinion, an independent check on a hard answer, or fresh web information "
+    "your own knowledge may not have.\n"
+    "- `agy_consult`: ask another model a plain question — ideal for second "
+    "opinions, cross-checking a tricky result, or delegating a sub-question.\n"
+    "- `agy_consult_with_files`: ask another model to review or analyze "
+    "specific files in the workspace (code review, multi-file comparison).\n"
+    "- `agy_web_search`: get live, current information from the web with "
+    "sources — recent events, latest docs/APIs, version-specific details.\n"
+    "- `agy_list_models`: see which models are selectable; pass the name via "
+    "`model`.\n"
+    "Reach for these whenever a different model's perspective, an independent "
+    "verification, or up-to-date web info would improve the answer. Calls are "
+    "stateless on this side; pass `conversation_id`/`continue_last` to resume "
+    "an agy-held conversation. Each tool returns a structured `AgyResult` "
+    "(`output`, `model`, `warnings`, `duration_ms`) and raises an error on "
+    "failure. Read `config://settings` for the live configuration."
 )
 
 mcp = FastMCP("antigravity-bridge", instructions=_INSTRUCTIONS)
@@ -157,7 +171,7 @@ async def _notify(ctx: _Ctx | None, level: str, message: str) -> None:
 @mcp.tool(
     name="agy_consult",
     title="Consult Antigravity (agy)",
-    description="Send a query directly to the Antigravity CLI.",
+    description="Get a second opinion or independent answer from a different AI model (via the Antigravity CLI). Use to cross-check a hard answer, get a fresh perspective, or delegate a sub-question. Pass `model` to pick a specific model (see `agy_list_models`).",
     annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True),
     structured_output=True,
 )
@@ -220,7 +234,7 @@ async def agy_consult(
 @mcp.tool(
     name="agy_consult_with_files",
     title="Consult Antigravity with files",
-    description="Send a query to the Antigravity CLI with file context.",
+    description="Get an answer from a different AI model with file attachments (via the Antigravity CLI). Use to have another model review, analyze, or compare specific workspace files — e.g. a code review or multi-file comparison. `mode='inline'` inlines snippets; `mode='at_command'` passes file paths.",
     annotations=ToolAnnotations(readOnlyHint=False, openWorldHint=True),
     structured_output=True,
 )
@@ -297,7 +311,7 @@ async def agy_consult_with_files(
 @mcp.tool(
     name="agy_web_search",
     title="Antigravity web search",
-    description="Ask Antigravity queries with web search context.",
+    description="Look up fresh, current information from the live web via a different AI model with search (Antigravity CLI). Use for recent events, latest docs/APIs, or version-specific details your own knowledge may lack; returns answers with sources.",
     annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=True),
     structured_output=True,
 )
@@ -361,7 +375,7 @@ async def agy_web_search(
 @mcp.tool(
     name="agy_list_models",
     title="List Antigravity models",
-    description="List the models available to the Antigravity CLI.",
+    description="List the AI models available to consult (e.g. Gemini, Claude, GPT variants). Call this first to discover valid `model` values for `agy_consult`, `agy_consult_with_files`, and `agy_web_search`.",
     annotations=ToolAnnotations(readOnlyHint=True, openWorldHint=False),
     structured_output=True,
 )
@@ -397,6 +411,14 @@ async def agy_list_models(ctx: _Ctx) -> AgyResult:
 # ---------------------------------------------------------------------------
 
 
+def _humanize_bytes(n: int) -> str:
+    """Render a byte count as a compact, human-readable string (e.g. ``"512.0 KB"``)."""
+    for label, size in (("GB", 1 << 30), ("MB", 1 << 20), ("KB", 1 << 10)):
+        if n >= size:
+            return f"{n / size:.1f} {label}"
+    return f"{n} B"
+
+
 @mcp.resource(
     "config://settings",
     name="settings",
@@ -404,11 +426,18 @@ async def agy_list_models(ctx: _Ctx) -> AgyResult:
     description="Live Antigravity Bridge settings and version (no secrets).",
 )
 def settings_resource() -> str:
-    """Return the effective, non-secret configuration plus the package version."""
+    """Return the effective, non-secret configuration plus the package version.
+
+    Scalar values stay machine-parseable. Dimensional settings also carry a
+    ``*_human`` companion (bytes → ``"512.0 KB"``, timeouts → ``"600 s"``,
+    lengths → ``"100000 chars"``) so the resource reads cleanly when a human
+    inspects it in an MCP client.
+    """
     s = config.load_settings()
     payload: dict[str, Any] = {
         "version": __version__,
         "default_timeout": s.default_timeout,
+        "default_timeout_human": f"{s.default_timeout} s",
         "model": s.model,
         "skip_permissions": s.skip_permissions,
         "sandbox": s.sandbox,
@@ -417,13 +446,21 @@ def settings_resource() -> str:
         "align_print_timeout": s.align_print_timeout,
         "max_retries": s.max_retries,
         "retry_backoff_base": s.retry_backoff_base,
+        "retry_backoff_base_human": f"{s.retry_backoff_base} s",
         "max_query_length": s.max_query_length,
+        "max_query_length_human": f"{s.max_query_length} chars",
         "allowed_dirs": list(s.allowed_dirs),
         "log_level": s.log_level,
         "log_format": s.log_format,
         "max_inline_file_count": s.max_inline_file_count,
         "max_inline_total_bytes": s.max_inline_total_bytes,
+        "max_inline_total_bytes_human": _humanize_bytes(s.max_inline_total_bytes),
         "max_inline_file_bytes": s.max_inline_file_bytes,
+        "max_inline_file_bytes_human": _humanize_bytes(s.max_inline_file_bytes),
+        "inline_chunk_head_bytes": s.inline_chunk_head_bytes,
+        "inline_chunk_head_bytes_human": _humanize_bytes(s.inline_chunk_head_bytes),
+        "inline_chunk_tail_bytes": s.inline_chunk_tail_bytes,
+        "inline_chunk_tail_bytes_human": _humanize_bytes(s.inline_chunk_tail_bytes),
     }
     return json.dumps(payload, indent=2, sort_keys=True)
 

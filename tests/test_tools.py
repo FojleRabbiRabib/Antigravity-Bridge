@@ -427,6 +427,25 @@ def test_settings_resource_includes_version():
     assert "api_key" not in payload
 
 
+def test_settings_resource_complete_and_humanized():
+    """The resource exposes every Settings field plus human-readable companions."""
+    import src.tools as tools
+
+    payload = json.loads(tools.settings_resource())
+    # The two previously-missing truncation-chunk settings are now present.
+    assert "inline_chunk_head_bytes" in payload
+    assert "inline_chunk_tail_bytes" in payload
+    # Dimensional settings carry a ``*_human`` companion.
+    assert payload["max_inline_file_bytes_human"] == "512.0 KB"
+    assert payload["max_inline_total_bytes_human"] == "1.0 MB"
+    assert payload["inline_chunk_head_bytes_human"] == "64.0 KB"
+    assert payload["default_timeout_human"] == "600 s"
+    assert payload["max_query_length_human"] == "100000 chars"
+    # Scalar values remain machine-parseable (backward compatible).
+    assert payload["max_inline_file_bytes"] == 524288
+    assert isinstance(payload["default_timeout"], int)
+
+
 # ---------------------------------------------------------------------------
 # prompts
 # ---------------------------------------------------------------------------

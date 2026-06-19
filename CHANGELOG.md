@@ -27,6 +27,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 - **Default timeout raised from 120s to 600s (10 min)**. The previous 120s default was too short for model "thinking" responses; `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` and `ANTIGRAVITY_BRIDGE_TIMEOUT` now default to `600`.
+- **AI-optimized tool/instructions copy**: the server `instructions` and each tool's `description` now lead with the value and the use-case trigger (second opinion from another model, fresh web info, file review) rather than the mechanical "send a query to the CLI" wording — so client models discover and reach for the tools without an explicit instruction to do so.
+- **`config://settings` completeness + readability**: added the previously-missing `inline_chunk_head_bytes` / `inline_chunk_tail_bytes`, and every dimensional setting now carries a `*_human` companion (e.g. `max_inline_file_bytes_human: "512.0 KB"`, `default_timeout_human: "600 s"`, `max_query_length_human: "100000 chars"`) while the raw scalar values stay for machine parsing.
 
 ### Added (MCP SDK features)
 - **Strict argument validation**: unknown/extra arguments are rejected with a `ToolError`. FastMCP ignored them by default (Pydantic `extra="ignore"`); the argument models are now built with `extra="forbid"`, so an unknown parameter is a hard error server-side **and** every tool's input schema advertises `additionalProperties: false`, so well-behaved clients reject it before even sending the call. `agy_consult_with_files` also validates `mode` up front (`"inline"`/`"at_command"`) rather than failing later inside the CLI layer.
