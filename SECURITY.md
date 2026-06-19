@@ -2,9 +2,12 @@
 
 ## Supported Versions
 
-| Version | Supported          |
-| ------- | ------------------ |
-| 1.0.x   | :white_check_mark: |
+| Version   | Supported          |
+| --------- | ------------------ |
+| 1.1.x     | :white_check_mark: |
+| < 1.1     | :x: (best effort)  |
+
+Only the latest released line receives security fixes.
 
 ## Reporting a Vulnerability
 
@@ -69,22 +72,40 @@ Environment:
 4. **Error Messages**: Don't leak sensitive information in errors
 5. **Dependencies**: Keep `mcp` and Antigravity CLI updated
 
-## Known Security Considerations
+## Security Model & Controls
 
-### Current Architecture
+### Trust Boundaries
 
-- **CLI Dependency**: Security depends on Antigravity CLI installation
-- **File Access**: MCP tools can access files in specified directories
-- **Subprocess Calls**: Uses subprocess to call `agy`
-- **Network Requests**: All network requests handled by Antigravity CLI
-- **Process Isolation**: Each tool call runs in an isolated subprocess
+| Boundary | Trust Level | Rationale |
+|----------|-------------|-----------|
+| MCP client arguments | **Untrusted** | Validated before use; never interpolated into a shell |
+| Host filesystem | Partially trusted | Paths are resolved and contained, not blindly followed |
+| `agy` CLI + its auth | Trusted (out of scope) | The integration target; its behavior is its own threat model |
+| Model responses | Forwarded verbatim | Content is passed through; no server-side filtering |
 
-### Mitigations
+This server runs **no network code of its own** — every request is a local
+`create_subprocess_exec` call to `agy` (no shell, no string interpolation).
 
-- **Timeout Protection**: Configurable timeout prevents long-running attacks
-- **Error Handling**: Graceful error handling without information leakage
-- **No Persistent State**: Stateless operation reduces attack surface
-- **Simple Architecture**: Minimal codebase reduces potential vulnerabilities
+### Controls Implemented
+
+| Control | Where | Effect |
+|---------|-------|--------|
+| Path containment | `security.resolve_within_root` (symlink-aware) | Rejects escapes from the working directory in `inline` and `at_command` modes |
+| Directory allowlist | `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` | Optionally locks queries to specific roots (empty = unrestricted, by design, for full-project investigation) |
+| Query validation | `security.validate_query` | Length cap + control-character rejection before any subprocess call |
+| Model validation | `tools._validate_model` | Rejects unknown `model` values against `agy models`; degrades gracefully if the list is unavailable |
+| Strict argument checking | `ArgModelBase(extra="forbid")` | Tool schemas carry `additionalProperties: false`; unknown params raise `ToolError` server-side |
+| Binary guards | `security.is_text_file` | Inline mode skips NUL-byte-detected binaries rather than dumping them |
+| Attachment caps | `files.prepare_*` | File-count, per-file, and total-byte limits on inline payloads; count cap on `@`-command |
+| Permission skip opt-in | `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `--dangerously-skip-permissions` is **off** by default |
+| Subprocess safety | `cli._run_agy_*` | No shell, bounded timeouts, process-group teardown (no orphans), retry on transient errors only |
+| Stateless | (whole server) | No session state, no persistence, no caches of secrets |
+
+### Notes
+
+- **No command injection**: the argv is built as a typed list (`AgyCommand`) and passed to `create_subprocess_exec`; user text is never concatenated into a shell string.
+- **No secret handling**: the server holds no API keys, tokens, or credentials. The `config://settings` resource exposes only non-secret fields.
+- **TOCTOU**: as with any path-checking design, a file can change between the containment check and the read; this is inherent and accepted (the agy CLI also re-resolves paths in `at_command` mode).
 
 ## Disclosure Policy
 

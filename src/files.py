@@ -138,9 +138,21 @@ def prepare_inline_payload(
 def prepare_at_command_prompt(
     directory: str, files_list: list[str]
 ) -> tuple[str, list[str]]:
-    """Return @-command prompt and any warnings."""
+    """Return @-command prompt and any warnings.
+
+    Applies the same attachment guardrails as :func:`prepare_inline_payload` —
+    path containment, regular-file check (so a FIFO/socket/directory is not
+    handed to ``agy``, where it would block), and the file-count cap. Binary
+    detection and byte truncation are intentionally NOT applied: in this mode
+    ``agy`` resolves and reads the files itself.
+    """
     warnings: list[str] = []
     prompt_lines: list[str] = []
+    processed = 0
+
+    if config.MAX_INLINE_FILE_COUNT <= 0:
+        warnings.append("@-command attachments disabled via MAX_INLINE_FILE_COUNT<=0")
+        return "", warnings
 
     for original_path in files_list:
         abs_path, rel_path = resolve_path(directory, original_path)
@@ -150,7 +162,17 @@ def prepare_at_command_prompt(
         if not Path(abs_path).exists():
             warnings.append(f"Skipped missing file: {original_path}")
             continue
+        if not Path(abs_path).is_file():
+            warnings.append(f"Skipped non-regular file: {original_path}")
+            continue
+        if processed >= config.MAX_INLINE_FILE_COUNT:
+            warnings.append(
+                f"File limit reached ({config.MAX_INLINE_FILE_COUNT}); "
+                f"skipped remaining attachments"
+            )
+            break
         prompt_lines.append(f"@{rel_path}")
+        processed += 1
 
     if not prompt_lines:
         warnings.append("No readable files resolved for @ command; prompt unchanged")

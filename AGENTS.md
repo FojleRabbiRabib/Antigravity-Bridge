@@ -21,11 +21,11 @@ Run commands from the project root to ensure relative paths resolve correctly.
 - **Claude Code**: `claude mcp add antigravity-bridge -s user -- uvx antigravity-bridge`
 
 ## Coding Style & Naming Conventions
-Follow PEP 8 with 4-space indentation and an 88-character target line length. Use descriptive, lowercase `snake_case` for functions and variables, `UPPER_SNAKE_CASE` for constants, and reserve `CamelCase` for classes. Keep functions small, add docstrings describing intent, and include type hints on public interfaces. Use `python3` not `python` (system python may be v2). Use `from __future__ import annotations` in all modules for consistent type hint support.
+Follow PEP 8 with 4-space indentation and an 88-character target line length. Use descriptive, lowercase `snake_case` for functions and variables, `UPPER_SNAKE_CASE` for constants, and reserve `CamelCase` for classes. Keep functions small, add docstrings describing intent, and include type hints on public interfaces. Use `python3` not `python` (system python may be v2). Use `from __future__ import annotations` in all modules for consistent type hint support. **Exception:** `src/tools.py` must NOT use it — with postponed (string) annotations, FastMCP cannot detect the injected `ctx: Context` parameter, leaks it into the tool's input schema as a required argument, and breaks every `tools/call` with `ctx - Field required`. Keep `tools.py`'s annotations real.
 
 ## Testing Guidelines
-Validate changes by exercising all three MCP tools: `agy_consult`, `agy_consult_with_files`, and `agy_web_search`. Run `python3 -m src` for the stdio server and `uvx antigravity-bridge --help` to confirm CLI wiring. Automated tests are located under `tests/`:
-- `tests/test_config.py` — environment variable and timeout tests (covers all 9 `ANTIGRAVITY_BRIDGE_*` env vars)
+Validate changes by exercising all four MCP tools: `agy_consult`, `agy_consult_with_files`, `agy_web_search`, and `agy_list_models`. Run `python3 -m src` for the stdio server and `uvx antigravity-bridge --help` to confirm CLI wiring. Automated tests are located under `tests/`:
+- `tests/test_config.py` — environment variable and timeout tests (covers all `ANTIGRAVITY_BRIDGE_*` env vars)
 - `tests/test_cli.py` — CLI execution and error handling tests (CLI not found, auth errors, timeout, sandbox, skip-permissions)
 - `tests/test_files.py` — file handling and truncation tests (inline payload, @-command, path resolution, missing files, limits)
 - `tests/test_tools.py` — MCP tool registration and wiring tests (delegation, parameter validation, web search prepending)

@@ -15,16 +15,16 @@ def clear_env_vars(monkeypatch):
     monkeypatch.delenv("ANTIGRAVITY_BRIDGE_SANDBOX", raising=False)
 
 
-def test_default_timeout_is_120():
+def test_default_timeout_is_600():
     import src.config as cfg
 
-    assert cfg.DEFAULT_TIMEOUT == 120
+    assert cfg.DEFAULT_TIMEOUT == 600
 
 
-def test_get_timeout_defaults_to_120():
+def test_get_timeout_defaults_to_600():
     import src.config as cfg
 
-    assert cfg.get_timeout() == 120
+    assert cfg.get_timeout() == 600
 
 
 def test_get_timeout_with_custom_default(monkeypatch):
@@ -60,7 +60,7 @@ def test_get_timeout_invalid_negative(monkeypatch, caplog):
     caplog.set_level("WARNING")
     monkeypatch.setenv("ANTIGRAVITY_BRIDGE_TIMEOUT", "-5")
     importlib.reload(cfg)
-    assert cfg.get_timeout() == 120
+    assert cfg.get_timeout() == 600
     assert "must be positive" in caplog.text
 
 
@@ -72,14 +72,26 @@ def test_get_timeout_invalid_string(monkeypatch, caplog):
     caplog.set_level("WARNING")
     monkeypatch.setenv("ANTIGRAVITY_BRIDGE_TIMEOUT", "abc")
     importlib.reload(cfg)
-    assert cfg.get_timeout() == 120
+    assert cfg.get_timeout() == 600
     assert "must be integer" in caplog.text
+
+
+def test_get_timeout_falls_back_when_default_malformed(monkeypatch):
+    # A non-integer DEFAULT_TIMEOUT makes load_settings() raise ConfigError; the
+    # no-override branch must catch it and fall back to the import-time constant
+    # (itself 600 via _env_int's fail-soft path) rather than crashing.
+    import src.config as cfg
+
+    monkeypatch.delenv("ANTIGRAVITY_BRIDGE_TIMEOUT", raising=False)
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT", "abc")
+    importlib.reload(cfg)
+    assert cfg.get_timeout() == 600
 
 
 def test_coerce_timeout_none_returns_default():
     import src.config as cfg
 
-    assert cfg.coerce_timeout(None) == 120
+    assert cfg.coerce_timeout(None) == 600
 
 
 def test_coerce_timeout_valid():
@@ -91,8 +103,8 @@ def test_coerce_timeout_valid():
 def test_coerce_timeout_invalid_falls_back():
     import src.config as cfg
 
-    assert cfg.coerce_timeout(-1) == 120
-    assert cfg.coerce_timeout("bad") == 120
+    assert cfg.coerce_timeout(-1) == 600
+    assert cfg.coerce_timeout("bad") == 600
 
 
 def test_skip_permissions_defaults_false():
@@ -167,7 +179,7 @@ def test_settings_defaults():
     assert s.align_print_timeout is True
     assert s.log_level == "INFO"
     assert s.log_format == "text"
-    assert s.default_timeout == 120
+    assert s.default_timeout == 600
 
 
 def test_settings_skip_permissions_opt_in(monkeypatch):
@@ -238,7 +250,7 @@ def test_module_constants_fallback_on_bad_default_timeout(monkeypatch):
 
     monkeypatch.setenv("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT", "abc")
     importlib.reload(cfg)
-    assert cfg.DEFAULT_TIMEOUT == 120
+    assert cfg.DEFAULT_TIMEOUT == 600
 
 
 def test_module_constants_fallback_on_bad_retries(monkeypatch):

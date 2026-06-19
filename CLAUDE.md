@@ -122,7 +122,12 @@ src/
 - `agy_consult_with_files()` — file context tool
 - `agy_web_search()` — web search tool
 - `agy_list_models()` — list available models
+- `settings_resource()` — `config://settings` resource (live config + version)
+- `investigate_project()` / `code_review()` / `consult()` — reusable prompt templates
+- `_complete_arguments()` — `@mcp.completion` for `model` argument
+- `AgyResult` — Pydantic structured output model; `_validate_query`/`_validate_model` helpers
 - `main()` — logging init, config validation, signal handlers, `mcp.run()`
+- SDK features in use: structured output, `ToolError` on failure, tool annotations + titles, `Context` client logging, server `instructions`, `@mcp.prompt`, `@mcp.resource`, `@mcp.completion`
 
 ### Configuration
 
@@ -130,13 +135,14 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTIGRAVITY_BRIDGE_TIMEOUT` | `120` | Global timeout override (seconds) |
-| `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `120` | Module-level default timeout |
+| `ANTIGRAVITY_BRIDGE_TIMEOUT` | `600` | Global timeout override (seconds) |
+| `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `600` | Module-level default timeout |
 | `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `false` | Add `--dangerously-skip-permissions` (opt-in) |
 | `ANTIGRAVITY_BRIDGE_SANDBOX` | `false` | Enable sandbox mode |
 | `ANTIGRAVITY_BRIDGE_MODEL` | _(agy default)_ | Default model override |
 | `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` | _(empty = unrestricted)_ | Directory allowlist (comma/colon-separated) |
 | `ANTIGRAVITY_BRIDGE_HEALTH_CHECK` | `true` | Cached `agy --version` preflight |
+| `ANTIGRAVITY_BRIDGE_FORCE_TTY` | `true` | Run `agy --print` under a pseudo-TTY (works around agy upstream bug #318, where print mode hangs in headless subprocesses). Disable where PTYs are unavailable. |
 | `ANTIGRAVITY_BRIDGE_MAX_RETRIES` | `2` | Retries on transient failures |
 | `ANTIGRAVITY_BRIDGE_RETRY_BACKOFF_BASE` | `0.5` | Exponential backoff base (s) |
 | `ANTIGRAVITY_BRIDGE_MAX_QUERY_LENGTH` | `100000` | Max prompt length (chars) |
@@ -148,7 +154,11 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 | `ANTIGRAVITY_BRIDGE_INLINE_HEAD_BYTES` | `65536` | Head chunk for truncated files (64KB) |
 | `ANTIGRAVITY_BRIDGE_INLINE_TAIL_BYTES` | `32768` | Tail chunk for truncated files (32KB) |
 
-## MCP Tools Available
+## MCP Primitives
+
+All four tools return a structured `AgyResult` (`{success, output, model, warnings, duration_ms}`) and raise a proper MCP `ToolError` on failure (rather than an error-as-string). Each tool carries annotations (`readOnlyHint`/`openWorldHint`) and a human-readable title, and logs start/done/error events to the MCP client via an injected `Context`.
+
+**Argument strictness**: `ctx: Context` is auto-injected (never a user-facing arg). `src/tools.py` must **not** use `from __future__ import annotations` — with it, FastMCP fails to detect `ctx`, exposes it as a *required* schema field, and breaks every call. Unknown/extra arguments are rejected: the arg models are built with `extra="forbid"` (`ArgModelBase.model_config` patched before registration), so tool schemas carry `additionalProperties: false` and a stray parameter raises `ToolError`. `agy_consult_with_files` validates `mode` ∈ {`inline`, `at_command`} up front.
 
 ### `agy_consult`
 - **Purpose**: Direct CLI bridge for simple queries (async)
@@ -163,13 +173,24 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 
 ### `agy_web_search`
 - **Purpose**: Web search queries with Antigravity CLI (async)
-- **Parameters**: `query`, `directory`, `timeout_seconds`
+- **Parameters**: `query`, `directory`, `timeout_seconds`, `model`, `add_dirs`, `conversation_id`, `continue_last`
 - **Use Case**: Current information, latest docs, recent changes
 
 ### `agy_list_models`
 - **Purpose**: List models available to the Antigravity CLI (async, wraps `agy models`)
 - **Parameters**: none
 - **Use Case**: Discover selectable models before passing `model` to other tools
+
+### Resource: `config://settings`
+- Exposes the live, non-secret configuration and the package version as JSON.
+
+### Prompts
+- `investigate_project(directory, exclude)` — assumption-free investigation prompt
+- `code_review(directory, focus)` — focused review prompt
+- `consult(query, model)` — wraps a query; `model` autocompletes from `agy models`
+
+### Model validation
+- `agy_consult`, `agy_consult_with_files`, and `agy_web_search` reject an unknown `model` (and the `ANTIGRAVITY_BRIDGE_MODEL` default) with a `ToolError` listing supported models; degrades gracefully when the model list is unavailable.
 
 ## Error Handling & Troubleshooting
 
@@ -178,6 +199,7 @@ All environment variables prefixed with `ANTIGRAVITY_BRIDGE_`:
 - **"Authentication required"**: Verify Antigravity authentication
 - **"Timed out after X seconds"**: Increase timeout or simplify query
 - **"Directory does not exist"**: Use absolute paths or verify directory
+- **"No output from Antigravity CLI"**: Should no longer occur (fixed via PTY). If it does, check `ANTIGRAVITY_BRIDGE_FORCE_TTY` and agy health.
 
 ## Development Guidelines
 

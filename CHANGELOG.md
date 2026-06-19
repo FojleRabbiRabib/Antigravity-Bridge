@@ -5,6 +5,44 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Critical: context (`ctx`) injection broken by postponed annotations.** `src/tools.py` used `from __future__ import annotations`, so FastMCP saw each tool's `ctx: Context` parameter as a *string* annotation, failed its context-kwarg detection, and exposed `ctx` in the input schema as a **required user argument** that is never supplied. The result: **every** `tools/call` failed with `ctx - Field required`, even valid ones. Removed the future import so annotations resolve at definition time; `ctx` is now correctly detected as the injected context kwarg and no longer appears in any tool's schema. *(Regression introduced by the SDK-features work below, caught before release.)*
+- **Headless `--print` hang (agy upstream bug [#318](https://github.com/google-antigravity/antigravity-cli/issues/318))**: `agy --print` produced no output and hung when spawned from a non-TTY/headless subprocess (exactly how the bridge runs it), so every consult/web-search call returned `"No output from Antigravity CLI"`. Print-mode invocations now run under an allocated pseudo-TTY (`src/cli.py:_run_agy_pty`): the slave end is handed to `agy`, the merged stream is read from master, ANSI escapes and PTY-added carriage returns are stripped, and timeout/teardown kill the whole process group. `agy models` and the `--version` health probe keep using plain pipes (they work headless).
+- New setting `ANTIGRAVITY_BRIDGE_FORCE_TTY` (default `true`) toggles the PTY path; set to `false` on platforms without PTY support.
+- **PTY file-descriptor leak on spawn failure**: a spawn failure (`FileNotFoundError`/`NotADirectoryError`/`OSError`) early-returned through only the inner `finally` (closing the slave fd) and skipped the outer one, leaking the master fd once per failed spawn. `_run_agy_pty` is restructured as a single `try/finally` that releases the master fd on every path.
+- **Bounded PTY process reap**: the final `proc.wait()` in the PTY teardown is now bounded (`_PTY_REAP_TIMEOUT`), so a `killpg` that fails to reap (exotic PID reuse / double-`setsid`) can no longer hang a cancelling task. The `PermissionError` fallback from `killpg` → `proc.kill()` is now logged at debug.
+- **Timeout metric accuracy**: `_ExecResult` carries an explicit `timed_out` flag set on the timeout return paths, so observability no longer guesses timeout state from output text.
+- **Effective timeout matches advertised config**: `get_timeout()` now reads the freshly-built `Settings` value (the same one exposed via `config://settings`) instead of the stale import-time constant, falling back gracefully if the env is malformed.
+- **`agy_web_search` argument strictness**: `directory` is now required (matching `agy_consult`), and length validation runs against the full forwarded prompt (including the bridge-internal prefix) rather than only the raw query.
+- **`at_command` attachment parity**: `@`-command mode now applies the same path-containment, regular-file (no FIFO/socket/dir), and file-count guards as inline mode, so a special file can no longer block the `agy` subprocess.
+
+### Documentation
+- **`SECURITY.md` security model**: added a concrete trust-boundaries and controls section mapping the path containment, allowlist, query/model validation, strict-argument, binary, and attachment-cap defenses; corrected the stale supported-versions table.
+- **`README.md`**: documented the four missing `agy_web_search` parameters and added `FORCE_TTY`/`ALIGN_PRINT_TIMEOUT` to the environment-variable table.
+- **`AGENTS.md`**: corrected "three MCP tools" → four (added `agy_list_models`), removed the stale env-var count, and carved out the documented `tools.py` exception to the `from __future__ import annotations` rule (re-introducing it there breaks `ctx` injection).
+
+### Changed
+- **Default timeout raised from 120s to 600s (10 min)**. The previous 120s default was too short for model "thinking" responses; `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` and `ANTIGRAVITY_BRIDGE_TIMEOUT` now default to `600`.
+
+### Added (MCP SDK features)
+- **Strict argument validation**: unknown/extra arguments are rejected with a `ToolError`. FastMCP ignored them by default (Pydantic `extra="ignore"`); the argument models are now built with `extra="forbid"`, so an unknown parameter is a hard error server-side **and** every tool's input schema advertises `additionalProperties: false`, so well-behaved clients reject it before even sending the call. `agy_consult_with_files` also validates `mode` up front (`"inline"`/`"at_command"`) rather than failing later inside the CLI layer.
+- **Structured tool output**: all four tools now return a Pydantic `AgyResult` (`{success, output, model, warnings, duration_ms}`) instead of a raw string. The response text is preserved in `output`. *(Breaking: tool return type changed from `string` to a structured object.)*
+- **Proper MCP errors**: tools now raise `ToolError` on failure instead of returning an `"Error: …"` success string, so clients receive a real error result.
+- **Tool annotations + titles**: each tool declares `readOnlyHint`/`openWorldHint` and a human-readable `title` so clients can present and gate them correctly.
+- **Client-side logging**: tools accept an injected MCP `Context` and forward start/done/error events to the client UI (in addition to server logs).
+- **Server `instructions`**: the server now advertises usage guidance to clients.
+- **`config://settings` resource**: exposes the live, non-secret configuration and package version.
+- **Reusable prompts**: `investigate_project`, `code_review`, and `consult` prompt templates.
+- **Argument completion**: `@mcp.completion` autocompletes the `model` argument of prompts from `agy models`.
+- **Model validation**: `agy_consult`, `agy_consult_with_files`, and `agy_web_search` validate the `model` parameter (and the `ANTIGRAVITY_BRIDGE_MODEL` default) against `agy models`, raising a clear `ToolError` listing supported models when an unknown name is supplied. Degrades gracefully (skips validation) if the model list is unavailable.
+
+### Internal
+- `src/cli.py` execution functions gained structured `*_outcome_async()` variants returning an `AgyOutcome` (with a `success` flag); the original string-returning wrappers are preserved for backward compatibility.
+
+---
+
 ## [1.1.1] - 2026-06-17
 
 ### Fixed

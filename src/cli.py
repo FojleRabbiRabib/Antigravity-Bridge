@@ -11,9 +11,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import os
+import re
 import shutil
+import signal
 import time
 from collections.abc import Coroutine
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, NamedTuple
 
@@ -58,6 +62,25 @@ class _ExecResult(NamedTuple):
     success: bool
     output: str
     stderr: str
+    # Set on the timeout return paths so metrics don't have to guess from text.
+    timed_out: bool = False
+
+
+@dataclass
+class AgyOutcome:
+    """Structured result of a public agy call.
+
+    ``success`` distinguishes a real model response from any preflight/runtime
+    error (workspace, health, auth, timeout, non-zero exit). ``output`` always
+    holds the human-readable text — the response on success, the error message
+    otherwise — so existing string callers keep working via ``.output``.
+    """
+
+    success: bool
+    output: str
+    warnings: list[str] = field(default_factory=list)
+    model: str = ""
+    duration_ms: float | None = None
 
 
 def _record(
@@ -69,7 +92,7 @@ def _record(
         request_id=request_id,
         duration_ms=duration_ms,
         success=result.success,
-        timed_out=("timed out" in result.output.lower()),
+        timed_out=result.timed_out,
         tool=tool,
         model=model or "",
     )
@@ -92,6 +115,8 @@ async def _run_with_retry(
     timeout: int,
     settings: config.Settings,
     request_id: str = "",
+    *,
+    use_pty: bool = False,
 ) -> _ExecResult:
     """Run ``agy`` with bounded retry on transient failures.
 
@@ -100,7 +125,7 @@ async def _run_with_retry(
     """
     attempt = 0
     while True:
-        result = await _run_agy_async(cmd, cwd, timeout)
+        result = await _run_agy_async(cmd, cwd, timeout, use_pty=use_pty)
         if result.success:
             return result
         if _is_auth_error(result.output):
@@ -129,8 +154,179 @@ async def _run_with_retry(
         attempt += 1
 
 
-async def _run_agy_async(cmd: list[str], cwd: str, timeout: int) -> _ExecResult:
-    """Execute an ``agy`` command asynchronously with timeout + error mapping."""
+# ---------------------------------------------------------------------------
+# PTY-backed execution (works around agy upstream bug #318: ``--print`` hangs
+# in non-TTY/headless subprocess environments). agy only emits its response
+# when stdin/stdout/stderr are a real terminal, so we allocate a pseudo-TTY,
+# hand the slave end to the child, and read the (merged) stream from master.
+# ---------------------------------------------------------------------------
+
+# Strips CSI/OSC/other escape sequences agy may emit when it believes it has a
+# color terminal, plus stray carriage returns the PTY line discipline adds.
+_ANSI_RE = re.compile(
+    rb"\x1b\][^\x07]*(\x07|\x1b\\)|\x1b[@-Z\\-_]|\x1b\[[0-?]*[ -/]*[@-~]"
+)
+
+# Discourage color/TUI rendering inside the PTY. agy still sees a TTY (so #318
+# doesn't trip), but keeps its output plain.
+_PTY_ENV = {
+    "TERM": "dumb",
+    "NO_COLOR": "1",
+    "COLUMNS": "200",
+    "LINES": "100",
+}
+
+# Upper bound on the final proc.wait() in the PTY teardown path, so a killpg
+# that fails to actually reap the child cannot hang a cancelling task forever.
+_PTY_REAP_TIMEOUT: float = 5.0
+
+
+def _timeout_message(timeout: int) -> str:
+    return (
+        f"Error: Antigravity CLI command timed out after {timeout} "
+        "seconds. Try increasing timeout or simplifying your query."
+    )
+
+
+def _normalize_pty_output(data: bytes) -> str:
+    """Decode PTY bytes, strip ANSI escapes, and drop PTY-added CRs."""
+    cleaned = _ANSI_RE.sub(b"", data)
+    text = cleaned.decode("utf-8", errors="replace")
+    return text.replace("\r\n", "\n").replace("\r", "")
+
+
+async def _read_fd_all(fd: int) -> bytes:
+    """Read ``fd`` to EOF asynchronously.
+
+    On Linux a PTY master raises ``OSError(EIO)`` once the slave side is closed
+    (i.e. the child has exited); that is treated as a clean end-of-stream.
+    """
+    loop = asyncio.get_running_loop()
+    chunks: list[bytes] = []
+    while True:
+        try:
+            chunk = await loop.run_in_executor(None, os.read, fd, 65536)
+        except OSError:
+            break
+        if not chunk:
+            break
+        chunks.append(chunk)
+    return b"".join(chunks)
+
+
+def _terminate_process_group(proc: asyncio.subprocess.Process | None) -> None:
+    """Forcefully tear down the child and any descendants it spawned."""
+    if proc is None or proc.returncode is not None:
+        return
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except (ProcessLookupError, PermissionError) as exc:
+        # killpg is the only way to reap descendants the child spawned; if it is
+        # denied (e.g. the child dropped privileges / re-setsid'd), fall back to
+        # killing just the direct child and log that descendants may survive.
+        logger.debug("killpg failed (%s); falling back to proc.kill()", exc)
+        with contextlib.suppress(ProcessLookupError):
+            proc.kill()
+
+
+async def _run_agy_pty(cmd: list[str], cwd: str, timeout: int) -> _ExecResult:
+    """Run ``agy`` under a pseudo-TTY (merged stdout/stderr) with timeout.
+
+    Used for ``--print`` invocations to dodge upstream bug #318. The combined
+    stream is returned as ``output``; ``stderr`` is left empty because a PTY
+    cannot separate the two.
+    """
+    try:
+        import pty  # lazy: Unix-only module, absent on Windows
+    except ImportError:
+        return _ExecResult(
+            False,
+            "Error: pseudo-TTY support is unavailable on this platform. "
+            "Set ANTIGRAVITY_BRIDGE_FORCE_TTY=false to run without a PTY.",
+            "",
+        )
+    try:
+        master_fd, slave_fd = pty.openpty()
+    except (OSError, ValueError) as exc:
+        return _ExecResult(False, f"Error allocating pseudo-TTY: {exc}", "")
+
+    env = {**os.environ, **_PTY_ENV}
+    proc: asyncio.subprocess.Process | None = None
+    # One try/finally wraps spawn + read so master_fd is released on EVERY path
+    # — including spawn failure, whose early returns previously skipped the
+    # cleanup below and leaked one fd per failed spawn.
+    try:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *cmd,
+                cwd=cwd,
+                stdin=slave_fd,
+                stdout=slave_fd,
+                stderr=slave_fd,
+                start_new_session=True,
+                env=env,
+            )
+        except FileNotFoundError:
+            return _ExecResult(False, AGY_INSTALL_HINT, "")
+        except NotADirectoryError:
+            return _ExecResult(False, f"Error: Directory does not exist: {cwd}", "")
+        except OSError as exc:
+            return _ExecResult(False, f"Error launching Antigravity CLI: {exc}", "")
+        finally:
+            # The child owns its copy of the slave; the parent must release its
+            # own so reading master yields EOF once the child exits.
+            with contextlib.suppress(OSError):
+                os.close(slave_fd)
+
+        try:
+            data = await asyncio.wait_for(_read_fd_all(master_fd), timeout=timeout)
+            await asyncio.wait_for(proc.wait(), timeout=timeout)
+        except asyncio.TimeoutError:
+            _terminate_process_group(proc)
+            with contextlib.suppress(Exception):
+                await proc.wait()
+            return _ExecResult(False, _timeout_message(timeout), "", True)
+        except asyncio.CancelledError:
+            _terminate_process_group(proc)
+            with contextlib.suppress(Exception):
+                await proc.wait()
+            raise
+    finally:
+        with contextlib.suppress(OSError):
+            os.close(master_fd)
+        _terminate_process_group(proc)
+        # Bounded reap so a failed killpg (exotic: PID reuse / double-setsid)
+        # cannot hang the cancelling task indefinitely inside this finally.
+        if proc is not None and proc.returncode is None:
+            with contextlib.suppress(asyncio.CancelledError, asyncio.TimeoutError):
+                await asyncio.wait_for(proc.wait(), timeout=_PTY_REAP_TIMEOUT)
+
+    text = _normalize_pty_output(data).strip()
+    returncode = proc.returncode if proc is not None else 0
+    if returncode == 0:
+        output = text if text else "No output from Antigravity CLI"
+        return _ExecResult(True, output, "")
+    error_msg = text or f"Exit code {returncode}"
+    if _is_auth_error(error_msg):
+        return _ExecResult(
+            False,
+            f"Antigravity CLI Error: Authentication required. Details: {error_msg}",
+            "",
+        )
+    return _ExecResult(False, f"Antigravity CLI Error: {error_msg}", "")
+
+
+async def _run_agy_async(
+    cmd: list[str], cwd: str, timeout: int, *, use_pty: bool = False
+) -> _ExecResult:
+    """Execute an ``agy`` command asynchronously with timeout + error mapping.
+
+    ``use_pty=True`` routes the call through a pseudo-TTY (needed for
+    ``--print`` mode per upstream bug #318); the default pipe path is used for
+    subcommands such as ``models`` / ``--version`` that work headless.
+    """
+    if use_pty:
+        return await _run_agy_pty(cmd, cwd, timeout)
     try:
         proc = await asyncio.create_subprocess_exec(
             *cmd,
@@ -155,14 +351,7 @@ async def _run_agy_async(cmd: list[str], cwd: str, timeout: int) -> _ExecResult:
             with contextlib.suppress(ProcessLookupError):
                 proc.kill()
             await proc.wait()
-            return _ExecResult(
-                False,
-                (
-                    f"Error: Antigravity CLI command timed out after {timeout} "
-                    "seconds. Try increasing timeout or simplifying your query."
-                ),
-                "",
-            )
+            return _ExecResult(False, _timeout_message(timeout), "", True)
     finally:
         # Ensure the subprocess is never orphaned. Covers cancellation
         # (CancelledError propagated out of communicate) and any other early
@@ -304,13 +493,37 @@ async def execute_antigravity_simple_async(
     conversation_id: str = "",
     continue_last: bool = False,
 ) -> str:
+    """Backward-compatible string return (delegates to the outcome variant)."""
+    return (
+        await execute_antigravity_simple_outcome_async(
+            query,
+            directory,
+            timeout_seconds,
+            model,
+            add_dirs,
+            conversation_id,
+            continue_last,
+        )
+    ).output
+
+
+async def execute_antigravity_simple_outcome_async(
+    query: str,
+    directory: str = ".",
+    timeout_seconds: int | None = None,
+    model: str = "",
+    add_dirs: tuple[str, ...] = (),
+    conversation_id: str = "",
+    continue_last: bool = False,
+) -> AgyOutcome:
+    """Run a simple query and return a structured :class:`AgyOutcome`."""
     err = _check_workspace(directory, add_dirs=add_dirs)
     if err:
-        return err
+        return AgyOutcome(success=False, output=err, model=model)
 
     settings = config.load_settings()
     if settings.health_check and not await ensure_healthy():
-        return HEALTH_FAILED_HINT
+        return AgyOutcome(success=False, output=HEALTH_FAILED_HINT, model=model)
     timeout = config.coerce_timeout(timeout_seconds)
     cmd = _build_command(
         query=query,
@@ -324,11 +537,17 @@ async def execute_antigravity_simple_async(
     )
     request_id = observability.new_request_id()
     start = time.monotonic()
-    result = await _run_with_retry(cmd, directory, timeout, settings, request_id)
-    _record(
-        request_id, start, result, tool="agy_consult", model=model or settings.model
+    result = await _run_with_retry(
+        cmd, directory, timeout, settings, request_id, use_pty=settings.force_tty
     )
-    return result.output
+    used_model = model or settings.model
+    _record(request_id, start, result, tool="agy_consult", model=used_model)
+    return AgyOutcome(
+        success=result.success,
+        output=result.output,
+        model=used_model,
+        duration_ms=round((time.monotonic() - start) * 1000.0, 2),
+    )
 
 
 async def execute_antigravity_with_files_async(
@@ -342,20 +561,56 @@ async def execute_antigravity_with_files_async(
     conversation_id: str = "",
     continue_last: bool = False,
 ) -> str:
+    """Backward-compatible string return (delegates to the outcome variant)."""
+    return (
+        await execute_antigravity_with_files_outcome_async(
+            query,
+            directory,
+            files_list,
+            timeout_seconds,
+            mode,
+            model,
+            add_dirs,
+            conversation_id,
+            continue_last,
+        )
+    ).output
+
+
+async def execute_antigravity_with_files_outcome_async(
+    query: str,
+    directory: str = ".",
+    files_list: list[str] | None = None,
+    timeout_seconds: int | None = None,
+    mode: str = "inline",
+    model: str = "",
+    add_dirs: tuple[str, ...] = (),
+    conversation_id: str = "",
+    continue_last: bool = False,
+) -> AgyOutcome:
+    """Run a file-context query and return a structured :class:`AgyOutcome`."""
     err = _check_workspace(directory, add_dirs=add_dirs)
     if err:
-        return err
+        return AgyOutcome(success=False, output=err, model=model)
 
     if not files_list:
-        return "Error: No files provided for file attachment mode"
+        return AgyOutcome(
+            success=False,
+            output="Error: No files provided for file attachment mode",
+            model=model,
+        )
 
     mode_normalized = mode.lower()
     if mode_normalized not in {"inline", "at_command"}:
-        return f"Error: Unsupported files mode '{mode}'. Use 'inline' or 'at_command'."
+        return AgyOutcome(
+            success=False,
+            output=f"Error: Unsupported files mode '{mode}'. Use 'inline' or 'at_command'.",
+            model=model,
+        )
 
     settings = config.load_settings()
     if settings.health_check and not await ensure_healthy():
-        return HEALTH_FAILED_HINT
+        return AgyOutcome(success=False, output=HEALTH_FAILED_HINT, model=model)
     timeout = config.coerce_timeout(timeout_seconds)
 
     if mode_normalized == "inline":
@@ -377,28 +632,44 @@ async def execute_antigravity_with_files_async(
     )
     request_id = observability.new_request_id()
     start = time.monotonic()
-    result = await _run_with_retry(cmd, directory, timeout, settings, request_id)
+    result = await _run_with_retry(
+        cmd, directory, timeout, settings, request_id, use_pty=settings.force_tty
+    )
+    used_model = model or settings.model
     _record(
         request_id,
         start,
         result,
         tool="agy_consult_with_files",
-        model=model or settings.model,
+        model=used_model,
     )
 
     if warnings:
         warning_block = "Warnings:\n" + "\n".join(f"- {w}" for w in warnings)
-        return f"{warning_block}\n\n{result.output}"
-    return result.output
+        output = f"{warning_block}\n\n{result.output}"
+    else:
+        output = result.output
+    return AgyOutcome(
+        success=result.success,
+        output=output,
+        warnings=list(warnings),
+        model=used_model,
+        duration_ms=round((time.monotonic() - start) * 1000.0, 2),
+    )
 
 
 async def execute_antigravity_models_async() -> str:
+    """Backward-compatible string return (delegates to the outcome variant)."""
+    return (await execute_antigravity_models_outcome_async()).output
+
+
+async def execute_antigravity_models_outcome_async() -> AgyOutcome:
     """List available models via the ``agy models`` subcommand."""
     if not shutil.which("agy"):
-        return AGY_INSTALL_HINT
+        return AgyOutcome(success=False, output=AGY_INSTALL_HINT)
     settings = config.load_settings()
     if settings.health_check and not await ensure_healthy():
-        return HEALTH_FAILED_HINT
+        return AgyOutcome(success=False, output=HEALTH_FAILED_HINT)
     cmd: list[str] = ["agy"]
     if settings.skip_permissions:
         cmd.append("--dangerously-skip-permissions")
@@ -406,9 +677,14 @@ async def execute_antigravity_models_async() -> str:
     timeout = config.coerce_timeout(None)
     request_id = observability.new_request_id()
     start = time.monotonic()
+    # ``agy models`` is a plain subcommand that works headless; no PTY needed.
     result = await _run_with_retry(cmd, ".", timeout, settings, request_id)
     _record(request_id, start, result, tool="agy_list_models", model="")
-    return result.output
+    return AgyOutcome(
+        success=result.success,
+        output=result.output,
+        duration_ms=round((time.monotonic() - start) * 1000.0, 2),
+    )
 
 
 def execute_antigravity_simple(

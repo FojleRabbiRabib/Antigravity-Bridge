@@ -72,7 +72,7 @@ def _env_float(name: str, default: float) -> float:
 # Backward-compatible module constants (read at import time)
 # ---------------------------------------------------------------------------
 
-DEFAULT_TIMEOUT: Final[int] = _env_int("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT", 120)
+DEFAULT_TIMEOUT: Final[int] = _env_int("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT", 600)
 # Security: auto-skipping permissions is opt-in (default False).
 SKIP_PERMISSIONS: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS", "false")
 SANDBOX: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_SANDBOX", "false")
@@ -106,6 +106,10 @@ HEALTH_CHECK: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_HEALTH_CHECK", "true")
 ALIGN_PRINT_TIMEOUT: Final[str] = os.getenv(
     "ANTIGRAVITY_BRIDGE_ALIGN_PRINT_TIMEOUT", "true"
 )
+# Run ``agy --print`` under a pseudo-TTY. agy's print mode hangs in non-TTY /
+# headless subprocess environments (upstream bug #318), which is exactly how the
+# bridge spawns it. Default on; can be disabled where PTYs are unavailable.
+FORCE_TTY: Final[str] = os.getenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "true")
 
 
 # ---------------------------------------------------------------------------
@@ -161,6 +165,7 @@ class Settings:
     max_query_length: int
     health_check: bool
     align_print_timeout: bool
+    force_tty: bool
     max_inline_file_count: int
     max_inline_total_bytes: int
     max_inline_file_bytes: int
@@ -172,7 +177,7 @@ def load_settings() -> Settings:
     """Build a :class:`Settings` from the current environment (fail-fast)."""
     default_timeout = _parse_int(
         "ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT",
-        os.getenv("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT", "120"),
+        os.getenv("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT", "600"),
     )
     if default_timeout <= 0:
         raise ConfigError("ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT must be positive")
@@ -217,6 +222,7 @@ def load_settings() -> Settings:
         align_print_timeout=_parse_bool(
             os.getenv("ANTIGRAVITY_BRIDGE_ALIGN_PRINT_TIMEOUT", "true")
         ),
+        force_tty=_parse_bool(os.getenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "true")),
         max_inline_file_count=_parse_int(
             "ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_COUNT",
             os.getenv("ANTIGRAVITY_BRIDGE_MAX_INLINE_FILE_COUNT", "30"),
@@ -253,7 +259,15 @@ def validate_config() -> Settings:
 def get_timeout() -> int:
     timeout_str = os.getenv("ANTIGRAVITY_BRIDGE_TIMEOUT")
     if not timeout_str:
-        return DEFAULT_TIMEOUT
+        # Use the freshly-read Settings value (the same one advertised via
+        # config://settings) so the effective default matches the documented
+        # one. Fall back to the import-time constant if the env is malformed
+        # (load_settings would raise ConfigError), preserving the fail-soft
+        # contract used by the module-level constants.
+        try:
+            return load_settings().default_timeout
+        except ConfigError:
+            return DEFAULT_TIMEOUT
     try:
         timeout = int(timeout_str)
         if timeout <= 0:

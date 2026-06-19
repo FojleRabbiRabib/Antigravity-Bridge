@@ -157,3 +157,50 @@ def test_prepare_inline_payload_skips_fifo(tmp_path):
 
     assert payload == ""
     assert any("non-regular" in w.lower() for w in warnings)
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "mkfifo"), reason="mkfifo unavailable on this platform"
+)
+def test_prepare_at_command_prompt_skips_fifo(tmp_path):
+    # @-command mode applies the same regular-file guard: handing a FIFO to agy
+    # (which reads the file itself in this mode) would block the subprocess.
+    fifo = tmp_path / "pipe"
+    os.mkfifo(str(fifo))
+    _prompt, warnings = files.prepare_at_command_prompt(str(tmp_path), ["pipe"])
+    assert any("non-regular" in w.lower() for w in warnings)
+
+
+def test_prepare_at_command_prompt_count_cap(tmp_path, monkeypatch):
+    # The count cap applies to @-command mode so agy is never handed an unbounded
+    # file list.
+    monkeypatch.setattr("src.config.MAX_INLINE_FILE_COUNT", 1)
+    for name in ("a.txt", "b.txt"):
+        (tmp_path / name).write_text("x", encoding="utf-8")
+    prompt, warnings = files.prepare_at_command_prompt(
+        str(tmp_path), ["a.txt", "b.txt"]
+    )
+    assert "@a.txt" in prompt
+    assert "@b.txt" not in prompt
+    assert any("File limit reached" in w for w in warnings)
+
+
+def test_prepare_at_command_prompt_disabled(tmp_path, monkeypatch):
+    # MAX_INLINE_FILE_COUNT<=0 disables @-command attachments entirely.
+    monkeypatch.setattr("src.config.MAX_INLINE_FILE_COUNT", 0)
+    (tmp_path / "a.txt").write_text("x", encoding="utf-8")
+    prompt, warnings = files.prepare_at_command_prompt(str(tmp_path), ["a.txt"])
+    assert prompt == ""
+    assert any("disabled" in w.lower() for w in warnings)
+
+
+def test_prepare_inline_payload_total_bytes_exceeded(tmp_path, monkeypatch):
+    # The cumulative byte cap skips a file that would push the payload over the
+    # configured total (not just the per-file or per-call count limits).
+    monkeypatch.setattr("src.config.MAX_INLINE_TOTAL_BYTES", 5)
+    (tmp_path / "a.txt").write_text("aaaa", encoding="utf-8")  # 4B, under 5
+    (tmp_path / "b.txt").write_text("bb", encoding="utf-8")  # would exceed 5
+    payload, warnings = files.prepare_inline_payload(str(tmp_path), ["a.txt", "b.txt"])
+    assert "=== a.txt ===" in payload
+    assert "=== b.txt ===" not in payload
+    assert any("exceeded" in w.lower() for w in warnings)

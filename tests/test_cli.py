@@ -18,6 +18,7 @@ class _FakeProc:
         self._stdout = stdout
         self._stderr = stderr
         self.killed = False
+        self.pid = 12345
 
     async def communicate(self):
         return self._stdout, self._stderr
@@ -63,6 +64,9 @@ def clear_env_vars(monkeypatch):
 
     cli.reset_health_cache()
     monkeypatch.setenv("ANTIGRAVITY_BRIDGE_HEALTH_CHECK", "false")
+    # Legacy tests assert against the pipe-based ``communicate()`` path via
+    # ``_FakeProc``; route them off the PTY path. Dedicated tests cover PTY.
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "false")
 
 
 # ---------------------------------------------------------------------------
@@ -334,7 +338,7 @@ async def test_retry_transient_then_success(monkeypatch):
     settings = cli.config.load_settings()
     calls = []
 
-    async def fake_run(cmd, cwd, timeout):
+    async def fake_run(cmd, cwd, timeout, *, use_pty=False):
         calls.append(1)
         if len(calls) == 1:
             return cli._ExecResult(False, "Antigravity CLI Error: connection reset", "")
@@ -354,7 +358,7 @@ async def test_retry_skips_auth_errors(monkeypatch):
     settings = cli.config.load_settings()
     calls = []
 
-    async def fake_run(cmd, cwd, timeout):
+    async def fake_run(cmd, cwd, timeout, *, use_pty=False):
         calls.append(1)
         return cli._ExecResult(
             False, "Antigravity CLI Error: Authentication required", ""
@@ -373,7 +377,7 @@ async def test_retry_skips_permanent_errors(monkeypatch):
     settings = cli.config.load_settings()
     calls = []
 
-    async def fake_run(cmd, cwd, timeout):
+    async def fake_run(cmd, cwd, timeout, *, use_pty=False):
         calls.append(1)
         return cli._ExecResult(False, "Antigravity CLI Error: bad syntax", "")
 
@@ -391,7 +395,7 @@ async def test_retry_caps_at_max(monkeypatch):
     assert settings.max_retries == 1
     calls = []
 
-    async def fake_run(cmd, cwd, timeout):
+    async def fake_run(cmd, cwd, timeout, *, use_pty=False):
         calls.append(1)
         return cli._ExecResult(False, "Antigravity CLI Error: network timeout", "")
 
@@ -409,7 +413,7 @@ async def test_retry_zero_retries(monkeypatch):
     settings = cli.config.load_settings()
     calls = []
 
-    async def fake_run(cmd, cwd, timeout):
+    async def fake_run(cmd, cwd, timeout, *, use_pty=False):
         calls.append(1)
         return cli._ExecResult(False, "Antigravity CLI Error: connection reset", "")
 
@@ -705,3 +709,269 @@ def _proc_returning(proc):
         return proc
 
     return fake_exec
+
+
+# ---------------------------------------------------------------------------
+# PTY-backed execution (agy upstream bug #318 workaround)
+# ---------------------------------------------------------------------------
+
+
+def test_normalize_pty_output():
+    import src.cli as cli
+
+    raw = b"\x1b[32mHello\r\nWorld\x1b[0m\r\n"
+    assert cli._normalize_pty_output(raw) == "Hello\nWorld\n"
+
+
+async def test_run_agy_async_dispatches_to_pty(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    seen = {}
+
+    async def fake_pty(cmd, cwd, timeout):
+        seen["called"] = True
+        seen["cmd"] = cmd
+        return cli._ExecResult(True, "OK", "")
+
+    monkeypatch.setattr(cli, "_run_agy_pty", fake_pty)
+    res = await cli._run_agy_async(
+        ["agy", "--print", "x"], str(tmp_path), 5, use_pty=True
+    )
+    assert seen["called"] is True
+    assert res.success and res.output == "OK"
+
+
+async def test_pty_happy_path_normalizes(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    monkeypatch.setattr("pty.openpty", lambda: (42, 43))
+    monkeypatch.setattr(cli.os, "close", lambda fd: None)
+    monkeypatch.setattr(
+        cli.asyncio,
+        "create_subprocess_exec",
+        _proc_returning(_FakeProc(0)),
+    )
+
+    async def fake_read(fd):
+        return b"\x1b[1mAnswer\r\nhere\x1b[0m"
+
+    monkeypatch.setattr(cli, "_read_fd_all", fake_read)
+    res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
+    assert res.success
+    assert res.output == "Answer\nhere"
+
+
+async def test_pty_empty_output(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    monkeypatch.setattr("pty.openpty", lambda: (42, 43))
+    monkeypatch.setattr(cli.os, "close", lambda fd: None)
+    monkeypatch.setattr(
+        cli.asyncio,
+        "create_subprocess_exec",
+        _proc_returning(_FakeProc(0)),
+    )
+
+    async def fake_read(fd):
+        return b""
+
+    monkeypatch.setattr(cli, "_read_fd_all", fake_read)
+    res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
+    assert res.success
+    assert res.output == "No output from Antigravity CLI"
+
+
+async def test_pty_timeout_kills_process_group(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    monkeypatch.setattr("pty.openpty", lambda: (42, 43))
+    monkeypatch.setattr(cli.os, "close", lambda fd: None)
+    # returncode stays None so the process group teardown actually runs.
+    monkeypatch.setattr(
+        cli.asyncio,
+        "create_subprocess_exec",
+        _proc_returning(_FakeProc(returncode=None)),
+    )
+    monkeypatch.setattr(cli.os, "getpgid", lambda pid: 999)
+    killed = {}
+    monkeypatch.setattr(
+        cli.os, "killpg", lambda pgid, sig: killed.setdefault("pgid", pgid)
+    )
+
+    async def slow_read(fd):
+        await asyncio.sleep(20)
+        return b""
+
+    monkeypatch.setattr(cli, "_read_fd_all", slow_read)
+    res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 1)
+    assert not res.success
+    assert "timed out" in res.output
+    assert killed.get("pgid") == 999
+
+
+async def test_pty_alloc_failure(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    def boom():
+        raise OSError("no pty available")
+
+    monkeypatch.setattr("pty.openpty", boom)
+    res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
+    assert not res.success
+    assert "pseudo-TTY" in res.output
+
+
+async def test_pty_spawn_failure_closes_both_fds(monkeypatch, tmp_path):
+    """Regression: a spawn failure must release both PTY fds.
+
+    The early ``return`` on spawn failure used to run only the inner ``finally``
+    (closing slave_fd) and skip the outer one, leaking master_fd once per failed
+    spawn. The restructured single try/finally must close both.
+    """
+    import src.cli as cli
+
+    closed: list[int] = []
+    monkeypatch.setattr("pty.openpty", lambda: (42, 43))
+    monkeypatch.setattr(cli.os, "close", lambda fd: closed.append(fd))
+
+    async def failing_spawn(*args, **kwargs):
+        raise FileNotFoundError()
+
+    monkeypatch.setattr(cli.asyncio, "create_subprocess_exec", failing_spawn)
+    res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
+    assert not res.success
+    assert "Antigravity CLI not found" in res.output
+    assert 42 in closed  # master_fd — the previously leaked descriptor
+    assert 43 in closed  # slave_fd
+
+
+async def test_force_tty_true_routes_through_pty(monkeypatch, tmp_path):
+    """The print path honours ANTIGRAVITY_BRIDGE_FORCE_TTY=true (the default)."""
+    import src.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _: "agy")
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "true")
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_HEALTH_CHECK", "false")
+    seen = {}
+
+    async def fake_retry(cmd, cwd, timeout, settings, rid, *, use_pty=False):
+        seen["use_pty"] = use_pty
+        return cli._ExecResult(True, "OK", "")
+
+    monkeypatch.setattr(cli, "_run_with_retry", fake_retry)
+    out = await cli.execute_antigravity_simple_async("Hi", str(tmp_path))
+    assert out == "OK"
+    assert seen["use_pty"] is True
+
+
+async def test_models_ignores_force_tty(monkeypatch, tmp_path):
+    """``agy models`` runs headless even when FORCE_TTY is true."""
+    import src.cli as cli
+
+    monkeypatch.setattr(cli.shutil, "which", lambda _: "agy")
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_FORCE_TTY", "true")
+    monkeypatch.setenv("ANTIGRAVITY_BRIDGE_HEALTH_CHECK", "false")
+    seen = {}
+
+    async def fake_retry(cmd, cwd, timeout, settings, rid, *, use_pty=False):
+        seen["use_pty"] = use_pty
+        return cli._ExecResult(True, "Gemini 3.5 Flash", "")
+
+    monkeypatch.setattr(cli, "_run_with_retry", fake_retry)
+    await cli.execute_antigravity_models_async()
+    assert seen["use_pty"] is False
+
+
+# ---------------------------------------------------------------------------
+# PTY execution: exit-code mapping, auth detection, cancellation, teardown
+# ---------------------------------------------------------------------------
+
+
+def _pty_harness(monkeypatch, proc, read_payload):
+    """Wire up the PTY path with fake fds + a canned read, return nothing."""
+    import src.cli as cli
+
+    monkeypatch.setattr("pty.openpty", lambda: (42, 43))
+    monkeypatch.setattr(cli.os, "close", lambda fd: None)
+    monkeypatch.setattr(cli.asyncio, "create_subprocess_exec", _proc_returning(proc))
+
+    async def fake_read(fd):
+        return read_payload
+
+    monkeypatch.setattr(cli, "_read_fd_all", fake_read)
+
+
+async def test_pty_nonzero_exit_maps_error(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    _pty_harness(monkeypatch, _FakeProc(1), b"something went wrong")
+    res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
+    assert not res.success
+    assert "Antigravity CLI Error" in res.output
+    assert "something went wrong" in res.output
+
+
+async def test_pty_auth_error_detected(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    _pty_harness(monkeypatch, _FakeProc(1), b"Error: authentication required")
+    res = await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
+    assert not res.success
+    assert "Authentication required" in res.output
+
+
+async def test_pty_cancellation_kills_process_group(monkeypatch, tmp_path):
+    import src.cli as cli
+
+    monkeypatch.setattr("pty.openpty", lambda: (42, 43))
+    monkeypatch.setattr(cli.os, "close", lambda fd: None)
+    monkeypatch.setattr(cli.os, "getpgid", lambda pid: 999)
+    killed = {}
+    monkeypatch.setattr(
+        cli.os, "killpg", lambda pgid, sig: killed.setdefault("pgid", pgid)
+    )
+    monkeypatch.setattr(
+        cli.asyncio,
+        "create_subprocess_exec",
+        _proc_returning(_FakeProc(returncode=None)),
+    )
+
+    async def read_then_cancel(fd):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(cli, "_read_fd_all", read_then_cancel)
+    with pytest.raises(asyncio.CancelledError):
+        await cli._run_agy_pty(["agy", "--print", "x"], str(tmp_path), 5)
+    assert killed.get("pgid") == 999
+
+
+def test_terminate_process_group_permission_fallback(monkeypatch):
+    """If killpg is denied, fall back to proc.kill()."""
+    import src.cli as cli
+
+    proc = _FakeProc(returncode=None)
+    monkeypatch.setattr(cli.os, "getpgid", lambda pid: 999)
+    monkeypatch.setattr(
+        cli.os,
+        "killpg",
+        lambda pgid, sig: (_ for _ in ()).throw(PermissionError()),
+    )
+    cli._terminate_process_group(proc)
+    assert proc.killed is True
+
+
+def test_terminate_process_group_noop_on_finished():
+    """A process that already exited is left alone."""
+    import src.cli as cli
+
+    proc = _FakeProc(returncode=0)
+    cli._terminate_process_group(proc)
+    assert proc.killed is False
+
+
+def test_normalize_pty_output_strips_osc_sequences():
+    import src.cli as cli
+
+    # OSC title-set sequence + trailing CR should be removed.
+    raw = b"\x1b]0;title\x07Hello\r\n"
+    assert cli._normalize_pty_output(raw) == "Hello\n"

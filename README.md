@@ -12,9 +12,10 @@ A lightweight MCP (Model Context Protocol) server that enables AI coding assista
 
 - **Direct Antigravity CLI Integration**: Zero API costs using the official `agy` CLI
 - **Four MCP Tools**: Basic queries, file analysis, web search, and model listing
+- **Rich MCP Surface**: Structured (Pydantic) tool outputs, proper `ToolError` reporting, tool annotations + titles, client-side logging via `Context`, server instructions, a `config://settings` resource, reusable prompts, and `model` argument completion
 - **Stateless Operation**: No sessions, caching, or complex state management (optional conversation continuation is caller-driven)
-- **Production Ready**: Async, non-blocking execution with retries, health checks, structured logging, and metrics
-- **Secure by Default**: Path containment, directory allowlisting, query validation, and binary-file guards; permission-skipping is opt-in
+- **Production Ready**: Async, non-blocking execution with retries, health checks, structured logging, and metrics; runs `agy --print` under a pseudo-TTY to work around upstream headless-hang bug #318
+- **Secure by Default**: Path containment, directory allowlisting, query + model validation, and binary-file guards; permission-skipping is opt-in
 - **Minimal Dependencies**: Only requires `mcp>=1.0.0` and Antigravity CLI
 - **Easy Deployment**: Support for both `uvx` and traditional `pip` installation
 - **Universal MCP Compatibility**: Works with Claude Code, Cursor, VS Code, Windsurf, Cline, Void, Cherry Studio, Augment, Roo Code, Zencoder, and any MCP-compatible client
@@ -68,13 +69,15 @@ All configuration is done through environment variables prefixed with `ANTIGRAVI
 
 | Variable | Default | Description |
 |---|---|---|
-| `ANTIGRAVITY_BRIDGE_TIMEOUT` | `120` | Global timeout override (seconds) |
-| `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `120` | Module-level default timeout |
+| `ANTIGRAVITY_BRIDGE_TIMEOUT` | `600` | Global timeout override (seconds) |
+| `ANTIGRAVITY_BRIDGE_DEFAULT_TIMEOUT` | `600` | Module-level default timeout |
 | `ANTIGRAVITY_BRIDGE_SKIP_PERMISSIONS` | `false` | Add `--dangerously-skip-permissions`. **Opt-in** (security). |
 | `ANTIGRAVITY_BRIDGE_SANDBOX` | `false` | Add `--sandbox` for restricted execution |
 | `ANTIGRAVITY_BRIDGE_MODEL` | _(agy default)_ | Default model override for consult tools |
 | `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` | _(empty = unrestricted)_ | Comma/colon-separated directory allowlist |
 | `ANTIGRAVITY_BRIDGE_HEALTH_CHECK` | `true` | Cached one-time `agy --version` preflight |
+| `ANTIGRAVITY_BRIDGE_FORCE_TTY` | `true` | Run `agy --print` under a pseudo-TTY (works around upstream headless-hang bug #318). Disable where PTYs are unavailable |
+| `ANTIGRAVITY_BRIDGE_ALIGN_PRINT_TIMEOUT` | `true` | Pass `--print-timeout` so `agy --print` aborts on its own when the bridge timeout elapses |
 | `ANTIGRAVITY_BRIDGE_MAX_RETRIES` | `2` | Retries on transient failures (0 disables) |
 | `ANTIGRAVITY_BRIDGE_RETRY_BACKOFF_BASE` | `0.5` | Exponential backoff base (seconds) |
 | `ANTIGRAVITY_BRIDGE_MAX_QUERY_LENGTH` | `100000` | Max prompt length (chars) |
@@ -147,6 +150,10 @@ Queries with web search context. Best-effort — the model decides when to searc
 - `query` (string, required): Search query or question
 - `directory` (string, required): Working directory for command execution
 - `timeout_seconds` (int, optional): Override execution timeout
+- `model` (string, optional): Model override
+- `add_dirs` (list, optional): Extra directories to attach to the workspace
+- `conversation_id` (string, optional): Resume a specific conversation by ID
+- `continue_last` (bool, optional): Continue the most recent conversation
 
 **Example:**
 ```python
@@ -162,6 +169,34 @@ List the models available to the Antigravity CLI (wraps `agy models`).
 ```python
 agy_list_models()
 ```
+
+## Structured Tool Outputs
+
+Every tool returns a structured Pydantic object instead of a raw string:
+
+```json
+{
+  "success": true,
+  "output": "The response from Antigravity...",
+  "model": "Claude Opus 4.6 (Thinking)",
+  "warnings": [],
+  "duration_ms": 12450.5
+}
+```
+
+If a tool execution fails (e.g., timeout, invalid directory, authentication issue), the bridge raises a proper `ToolError` rather than returning an error string, enabling clients to handle failures natively.
+
+## Resources & Prompts
+
+Alongside tools, the bridge exposes standard MCP resources and prompts to the client:
+
+### Resources
+- `config://settings` — Exposes the server's effective settings, directory allowlist, version, and default parameters in JSON format.
+
+### Reusable Prompts
+- `investigate_project` — Builds a thorough, assumption-free prompt to investigate a workspace directory.
+- `code_review` — Builds a focused code-review prompt seeking correctness, robustness, and security issues.
+- `consult` — Formats a query to include an autocompleted model parameter.
 
 ## Multi-Client Support
 
@@ -274,7 +309,7 @@ Zencoder menu → `Tools` → `Add Custom MCP`
 ### Design Principles
 - **CLI-First**: Direct subprocess calls to `agy --print`
 - **Stateless**: Each tool call is independent with no session state
-- **Adaptive Timeout**: Defaults to 120 seconds, overridable per request or via env var
+- **Adaptive Timeout**: Defaults to 600 seconds, overridable per request or via env var
 - **Attachment Guardrails**: Inline mode enforces byte/quantity caps; `@` mode delegates to Antigravity CLI
 - **Fail-Fast**: Clear error messages with simple error handling
 - **Zero Extra Dependencies**: Only `mcp>=1.0.0` beyond the Antigravity CLI
@@ -340,6 +375,7 @@ python3 -c "import src; print(f'v{src.__version__}')"
 | "Directory not in allowlist" | Add it to `ANTIGRAVITY_BRIDGE_ALLOWED_DIRS` (or leave empty for unrestricted) |
 | "No files provided" | Provide at least one valid file path |
 | "Unsupported files mode" | Use `"inline"` or `"at_command"` |
+| "Extra inputs are not permitted" | The call passed an argument the tool doesn't accept. Tool schemas forbid unknown params (`additionalProperties: false`) — drop it and use only the documented parameters. |
 | "Skipped binary file" / "outside working directory" | Expected guards — inline mode skips binaries and path escapes |
 
 ## Contributing
